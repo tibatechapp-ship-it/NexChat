@@ -1,17 +1,15 @@
 {
-  "name": "nexchat-server",
-  "version": "0.1.0",
-  "description": "NexChat real-time chat server (Socket.IO + Express)",
-  "main": "src/index.js",
-  "scripts": {
-    "dev": "node src/index.js",
-    "start": "node src/index.js"
-  },
+  "name": "rasan-server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
+  "engines": { "node": ">=20" },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
     "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
     "socket.io": "^4.7.5",
-    "cors": "^2.8.5",
-    "uuid": "^9.0.1"
-  },
-  "engines": { "node": ">=18" }
+    "multer": "^1.4.5-lts.1"
+  }
 }

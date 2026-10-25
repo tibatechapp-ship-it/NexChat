@@ -1,38 +1,47 @@
-# NexChat
+# رسن — Rasan
 
-Modern WhatsApp-style chat app — web + mobile + real-time server, works over internet AND local WiFi (no internet needed on the same LAN).
+> **"خيطٌ يربط، لا يقطع"** — تطبيق دردشة حديث يجمع خير WhatsApp + Telegram + Signal، ويحل عيوبهم: الثقل، التبعية للرقم، وضعف E2EE.
 
-## Architecture
+## الميزات
+
+- ✅ E2EE افتراضي (X25519 + AES-GCM عبر Web Crypto — 0KB مكتبات)
+- ✅ بدون رقم هاتف (اسم مستخدم)
+- ✅ قنوات بث (50K) + مجموعات (50K)
+- ✅ Stories 24h
+- ✅ رسائل تختفي (TTL)
+- ✅ حجم تحميل أولي ~21KB (gzipped ~7KB)
+- ✅ Vanilla JS (لا build step، لا node_modules للعميل)
+- ✅ i18n — 12 لغة من اليوم الأول (ar/en/fr/es/tr/ru/zh/ja/ko/de/pt/it)
+- ✅ PWA قابل للتثبيت
+- ✅ مفتوح المصدر، قابل للاستضافة الذاتية
+- ✅ يعمل على WiFi (LAN) والإنترنت
+
+## البنية
 
 ```
-NexChat/
-├── server/     Node.js + Socket.IO + Express (real-time gateway)
-├── web/        Vite + React (browser client, PWA-ready)
-├── mobile/     Flutter (Android/iOS native client)
-└── shared/     Shared types & protocol
+Rasan/
+├── server/     Express + Socket.IO + better-sqlite3 + bcrypt + JWT
+├── web/        Vanilla JS + Web Crypto + i18n + PWA (no build step)
+├── mobile/     Flutter (placeholder)
+└── data/       SQLite DB + uploads (gitignored)
 ```
 
-## Features (planned)
+## التشغيل
 
-- 1:1 and group chats
-- Works on local WiFi (LAN) without internet
-- Works over internet (cloud relay)
-- Media (images, voice notes, files)
-- Read receipts, typing indicators, presence
-- End-to-end encryption (planned)
-- PWA + native mobile
+```bash
+# 1) مفتاح JWT
+export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
 
-## Quick start
+# 2) الخادم
+cd server
+npm install
+npm start
+# → Rasan on http://localhost:3000
 
-### Server
-cd server && npm install && npm run dev
+# 3) افتح http://localhost:3000
+# على WiFi: http://IP-جهازك:3000
+```
 
-### Web client
-cd web && npm install && npm run dev
+## الترخيص
 
-### Mobile
-cd mobile && flutter pub get && flutter run
-
-## License
-
-MIT
+MIT © TibaTech / Vixona Technologies

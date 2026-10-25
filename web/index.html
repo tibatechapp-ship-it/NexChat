@@ -1,12 +1,103 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NexChat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b141a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/style.css" />
+  <title>رسن — Rasan</title>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.jsx"></script>
+
+<!-- Auth screen -->
+<section id="auth" class="screen">
+  <div class="card">
+    <div class="logo">رسن</div>
+    <p class="tagline" data-i18n="tagline">خيطٌ يربط، لا يقطع</p>
+    <div class="tabs">
+      <button class="tab active" data-mode="login" data-i18n="login">دخول</button>
+      <button class="tab" data-mode="register" data-i18n="register">حساب جديد</button>
+    </div>
+    <form id="auth-form">
+      <input id="username" placeholder="اسم المستخدم" autocomplete="username" required />
+      <input id="password" type="password" placeholder="كلمة المرور" required />
+      <select id="locale">
+        <option value="ar">العربية</option>
+        <option value="en">English</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="tr">Türkçe</option>
+        <option value="ru">Русский</option>
+        <option value="zh">中文</option>
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+        <option value="de">Deutsch</option>
+        <option value="pt">Português</option>
+        <option value="it">Italiano</option>
+      </select>
+      <button type="submit" id="submit" data-i18n="login">دخول</button>
+    </form>
+    <p id="err" class="err"></p>
+  </div>
+</section>
+
+<!-- Main app -->
+<main id="app" class="app hidden">
+  <header>
+    <button id="back" class="icon hidden">←</button>
+    <h2 id="title">رسن</h2>
+    <div class="actions">
+      <button id="new-chat" class="icon" title="محادثة جديدة">+</button>
+      <button id="new-group" class="icon" title="مجموعة">👥</button>
+      <button id="stories-btn" class="icon" title="ستوري">◉</button>
+      <button id="logout" class="icon" title="خروج">⎋</button>
+    </div>
+  </header>
+  <section id="list" class="list"></section>
+  <section id="chat" class="chat hidden">
+    <div id="messages" class="messages"></div>
+    <p id="typing" class="typing"></p>
+    <form id="send-form" class="composer">
+      <input id="msg-input" placeholder="اكتب رسالة..." autocomplete="off" />
+      <input type="file" id="file-input" hidden />
+      <button type="button" id="attach" class="icon">📎</button>
+      <button type="submit" class="send">➤</button>
+    </form>
+  </section>
+</main>
+
+<!-- Stories modal -->
+<section id="stories" class="modal hidden">
+  <div class="modal-card">
+    <h3 data-i18n="stories">ستوريات (24 ساعة)</h3>
+    <div id="stories-list" class="stories-grid"></div>
+    <form id="story-form">
+      <input id="story-text" placeholder="نص الستوري..." required />
+      <button type="submit" data-i18n="post">نشر</button>
+    </form>
+    <button id="close-stories" class="btn-secondary" data-i18n="close">إغلاق</button>
+  </div>
+</section>
+
+<!-- New group modal -->
+<section id="group-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3 data-i18n="newGroup">مجموعة جديدة</h3>
+    <input id="group-name" placeholder="اسم المجموعة" />
+    <textarea id="group-desc" placeholder="وصف (اختياري)" rows="2"></textarea>
+    <input id="group-members" placeholder="اسماء المستخدمين (مفصولة بفواصل)" />
+    <div class="modal-actions">
+      <button id="create-group" class="btn-primary" data-i18n="create">إنشاء</button>
+      <button id="close-group" class="btn-secondary" data-i18n="close">إغلاق</button>
+    </div>
+  </div>
+</section>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/i18n.js"></script>
+<script src="/crypto.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
