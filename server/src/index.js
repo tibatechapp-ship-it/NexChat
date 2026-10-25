@@ -12,6 +12,8 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
 const users = new Map();
+let totalMessages = 0;
+const startedAt = Date.now();
 
 io.on('connection', (socket) => {
   console.log('connect', socket.id);
@@ -26,6 +28,7 @@ io.on('connection', (socket) => {
   socket.on('message', ({ room, text }) => {
     const u = users.get(socket.id);
     if (!u) return;
+    totalMessages++;
     const msg = { id: uuidv4(), from: u.name, text, ts: Date.now() };
     io.to(room).emit('message', msg);
   });
@@ -46,7 +49,12 @@ io.on('connection', (socket) => {
   });
 });
 
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'NexChat', version: '0.1.0' }));
+app.get('/health', (_req, res) => res.json({
+  ok: true,
+  uptime: Math.floor((Date.now() - startedAt) / 1000),
+  totalMessages,
+  totalUsers: users.size,
+}));
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`NexChat server listening on :${PORT}`));
+server.listen(PORT, () => console.log(`NexChat running on http://localhost:${PORT}`));
