@@ -49,6 +49,7 @@
     <button id="back" class="icon hidden">←</button>
     <h2 id="title">رسن</h2>
     <div class="actions">
+      <button id="rotate-key" class="icon hidden" title="تدوير مفتاح المجموعة">🔄</button>
       <button id="new-chat" class="icon" title="محادثة جديدة">+</button>
       <button id="new-group" class="icon" title="مجموعة">👥</button>
       <button id="stories-btn" class="icon" title="ستوري">◉</button>
@@ -61,6 +62,7 @@
     <p id="typing" class="typing"></p>
     <form id="send-form" class="composer">
       <input id="msg-input" placeholder="اكتب رسالة..." autocomplete="off" />
+      <button type="button" id="attach" class="icon" style="border:0;background:transparent;font-size:20px;cursor:pointer">📎</button>
       <input type="file" id="file-input" hidden />
       <button type="button" id="attach" class="icon">📎</button>
       <button type="submit" class="send">➤</button>
@@ -87,6 +89,10 @@
     <h3 data-i18n="newGroup">مجموعة جديدة</h3>
     <input id="group-name" placeholder="اسم المجموعة" />
     <textarea id="group-desc" placeholder="وصف (اختياري)" rows="2"></textarea>
+    <select id="group-type">
+      <option value="group">مجموعة</option>
+      <option value="channel">قناة</option>
+    </select>
     <input id="group-members" placeholder="اسماء المستخدمين (مفصولة بفواصل)" />
     <div class="modal-actions">
       <button id="create-group" class="btn-primary" data-i18n="create">إنشاء</button>
@@ -95,6 +101,10 @@
   </div>
 </section>
 
+<div id="upload-status" class="upload-status hidden">
+  <div class="upload-bar"><div id="upload-progress"></div></div>
+  <span id="upload-label">جاري الرفع...</span>
+</div>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/i18n.js"></script>
 <script src="/crypto.js"></script>

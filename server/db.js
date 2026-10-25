@@ -4,6 +4,9 @@ const { DatabaseSync } = require("node:sqlite");
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 const db = new DatabaseSync(path.join(DATA_DIR, "rasan.db"));
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
@@ -24,7 +27,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   name TEXT,
   description TEXT,
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  current_key_version INTEGER DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS conversation_members (
   conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -42,14 +46,23 @@ CREATE TABLE IF NOT EXISTS messages (
   ciphertext TEXT NOT NULL,
   iv TEXT NOT NULL,
   ephemeral_ttl INTEGER DEFAULT 0,
-  time INTEGER NOT NULL
+  time INTEGER NOT NULL,
+  key_version INTEGER DEFAULT 1,
+  attachment_id TEXT,
+  deleted INTEGER DEFAULT 0,
+  edited_at INTEGER,
+  edit_ciphertext TEXT,
+  edit_iv TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_msg_conv_time ON messages(conversation_id, time DESC);
 CREATE TABLE IF NOT EXISTS group_keys (
   conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  encrypted_key TEXT NOT NULL,
+  wrapped_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wrapped_key TEXT NOT NULL,
   iv TEXT NOT NULL,
+  key_version INTEGER DEFAULT 1,
+  updated_at INTEGER NOT NULL,
   PRIMARY KEY (conversation_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS stories (
@@ -67,15 +80,30 @@ CREATE TABLE IF NOT EXISTS story_views (
   viewed_at INTEGER NOT NULL,
   PRIMARY KEY (story_id, viewer_id)
 );
-CREATE TABLE IF NOT EXISTS media (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  uploader_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  filename TEXT NOT NULL,
-  mime TEXT NOT NULL,
-  size INTEGER NOT NULL,
-  path TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  uploader_id INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+  size_bytes INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_att_conv ON attachments(conversation_id);
+CREATE TABLE IF NOT EXISTS key_backups (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  ciphertext TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  iterations INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS device_tokens (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_token_user ON device_tokens(user_id);
 `);
 
-module.exports = { db };
+module.exports = { db, DATA_DIR, UPLOAD_DIR };
