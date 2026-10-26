@@ -30,6 +30,15 @@ const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 }
 push.init();
 
 app.get("/health", (_q, res) => res.json({ ok: true, uptime: process.uptime() }));
+app.get("/api/stats", (req, res) => {
+  const key = req.query.key;
+  if (key !== process.env.STATS_KEY) return res.status(403).json({ error: "forbidden" });
+  const users = db.prepare("SELECT COUNT(*) c FROM users").get().c;
+  const convs = db.prepare("SELECT COUNT(*) c FROM conversations").get().c;
+  const msgs = db.prepare("SELECT COUNT(*) c FROM messages").get().c;
+  const last24h = db.prepare("SELECT COUNT(*) c FROM messages WHERE time > ?").get(Date.now() - 86400000).c;
+  res.json({ users, convs, msgs, last24h });
+});
 
 // ===== Socket.IO auth =====
 io.use((socket, next) => {
@@ -254,15 +263,19 @@ app.post("/api/conversations/:id/group-key/bulk", authRequired, (req, res) => {
   const members = new Set(db.prepare("SELECT user_id FROM conversation_members WHERE conversation_id = ?").all(req.params.id).map((r) => r.user_id));
   const upsert = db.prepare(`INSERT INTO group_keys (conversation_id, user_id, wrapped_by, wrapped_key, iv, key_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id, user_id) DO UPDATE SET wrapped_by=excluded.wrapped_by, wrapped_key=excluded.wrapped_key, iv=excluded.iv, key_version=excluded.key_version, updated_at=excluded.updated_at`);
   const now = Date.now();
-  const tx = db.transaction(() => {
+  try {
+    db.exec("BEGIN");
     for (const e of entries) {
       if (!members.has(e.userId)) continue;
       if (typeof e.wrapped_key !== "string" || typeof e.iv !== "string") continue;
       upsert.run(req.params.id, e.userId, req.user.id, e.wrapped_key, e.iv, version, now);
     }
     db.prepare("UPDATE conversations SET current_key_version = ? WHERE id = ?").run(version, req.params.id);
-  });
-  tx();
+    db.exec("COMMIT");
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw err;
+  }
   io.to("conv:" + req.params.id).emit("group-key:updated", { by: req.user.id, key_version: version });
   res.json({ ok: true, updated: entries.length, key_version: version });
 });
