@@ -120,3 +120,59 @@ header h2{font-size:17px;color:#e9edef;font-weight:600}
 .story-item b{color:#00a884;display:block;margin-bottom:4px}
 .story-item p{color:#e9edef;font-size:14px;margin-bottom:4px}
 .story-item small{color:#8696a0;font-size:11px}
+
+/* === Security verification UI (Rasan T1) === */
+.security-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin: 8px;
+  font-size: 14px;
+  gap: 12px;
+}
+.security-warning { background: #fff3cd; color: #664d03; border: 1px solid #ffecb5; }
+.security-danger  { background: #f8d7da; color: #842029; border: 1px solid #f5c2c7; }
+.security-success { background: #d1e7dd; color: #0f5132; border: 1px solid #badbcc; }
+
+.security-action {
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#verify-modal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.75);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+  direction: rtl;
+}
+#verify-modal.hidden { display: none; }
+
+.verify-panel {
+  background: white; border-radius: 12px;
+  padding: 24px; max-width: 420px; width: 90%;
+  text-align: center;
+}
+.verify-hint { font-size: 13px; color: #555; margin-bottom: 16px; }
+.safety-number {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 20px; font-weight: 700;
+  letter-spacing: 3px; line-height: 1.8;
+  margin: 16px 0; word-spacing: 12px;
+  user-select: all;
+}
+.qr-container { margin: 16px auto; width: 200px; height: 200px; }
+.qr-container svg { width: 100%; height: 100%; }
+.btn-primary, .btn-secondary {
+  width: 100%; padding: 10px; border-radius: 8px; border: none;
+  cursor: pointer; margin-top: 8px; font-weight: 600;
+}
+.btn-primary { background: #28a745; color: white; }
+.btn-secondary { background: transparent; color: #dc3545; }

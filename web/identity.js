@@ -84,6 +84,8 @@ globalThis.RasanIdentity = (() => {
     if (peer.identityPub === identityPubB64) {
       return { status: "same", peer };
     }
+    // MITM warning: record changedAt WITHOUT replacing the stored key.
+    peer.changedAt = Date.now();
     return { status: "changed", peer }; // MITM warning!
   }
 
@@ -120,10 +122,30 @@ globalThis.RasanIdentity = (() => {
     }
   }
 
+  // ---- Verified flag (user confirmed safety numbers match) ----
+  async function markPeerVerified(peerId) {
+    const db = await openDB();
+    const peer = await getPeer(peerId);
+    if (!peer) throw new Error("peer " + peerId + " not found");
+    peer.verifiedAt = Date.now();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(peer);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async function isPeerVerified(peerId) {
+    const peer = await getPeer(peerId);
+    if (!peer || !peer.verifiedAt) return false;
+    return peer.verifiedAt >= (peer.changedAt || 0);
+  }
+
   return {
     genIdentityKeypair, importPriv, importPub,
     signEphemeral, verifyEphemeral,
-    storePeer, getPeer, tofuCheck,
+    storePeer, getPeer, tofuCheck, markPeerVerified, isPeerVerified,
     generateSafetyNumber, qrPayload, parseQR,
     b64, unb64,
   };
