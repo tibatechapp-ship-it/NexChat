@@ -25,3 +25,4 @@ server/data/
 *.db
 *.db-shm
 *.db-wal
+test.sh
