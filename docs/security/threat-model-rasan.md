@@ -1,51 +1,70 @@
-# Rasan — E2EE Threat Model & Crypto Audit
+# Threat Model — Rasan
 
+**Version:** 2.0
 **Date:** 2026-10-27
-**Scope:** `web/crypto.js` (ECDH P-256 + HKDF + AES-GCM + PBKDF2 backup)
-**Status:** Audit findings — fixes tracked per item.
+**Status:** T1 MITIGATED (crypto + UI layers proven by 15 tests)
 
-## 1. What is protected
-- 1:1 messages, group messages, files, key backup (recovery code).
-- Primitives: Web Crypto only (no external libs). ECDH P-256, HKDF-SHA256, AES-GCM-256, PBKDF2-SHA256 (600k iters).
+## Scope
+1:1 messaging over Web Crypto (ECDH P-256 + AES-GCM), PWA, 12 languages,
+zero runtime dependencies except vendored qrcode-generator (MIT, ~20KB).
 
-## 2. Threats & findings
+## Findings
 
-| # | Threat | Severity | Finding | Status |
+| ID | Severity | Finding | Status | Evidence |
 |---|---|---|---|---|
-| T1 | MITM on key exchange | HIGH | Public keys exchanged without authentication (no TOFU / safety numbers / QR). Attacker can substitute keys. | OPEN |
-| T2 | Replay / reordering | MEDIUM | AES-GCM has no AAD (no sender/recipient/timestamp/counter). Replayed ciphertexts decrypt successfully. | OPEN |
-| T3 | No forward secrecy | MEDIUM | Long-term ECDH keys used for every message. Compromise of long-term key exposes all past messages. | OPEN (design) |
-| T4 | HKDF empty salt | LOW | `salt: new Uint8Array(0)`. RFC-allowed but reduces entropy mixing; use a fixed app-specific salt. | OPEN |
-| T5 | IV collision (birthday) | LOW | 96-bit random IV; safe up to ~2^48 messages per key. Acceptable for chat. | OK |
-| T6 | Recovery code entropy | OK | 24 bytes (192 bits) + 600k PBKDF2 iters. Strong. | OK |
-| T7 | Group key extractable | LOW | `extractable: true` allows export. Needed for backup but widens exposure. | ACCEPTED |
-| T8 | No sender identity binding | MEDIUM | GCM tag authenticates ciphertext but not sender. Recipient cannot cryptographically prove who sent. | OPEN |
-| T9 | Key backup stores `state.myKeys` | INFO | Depends on external `state`; verify it contains only keys, no plaintext. | VERIFY |
-| T10 | No key pinning / rotation | MEDIUM | No mechanism to rotate or pin identity keys. | OPEN (design) |
+| T1 | HIGH | MITM on key exchange — no TOFU/safety numbers/QR | **MITIGATED** | commit 0365ed3; 15 tests |
+| T2 | MED | No AAD → replay/reordering possible | OPEN | — |
+| T3 | MED | No forward secrecy (long-term keys) | OPEN | — |
+| T4 | LOW | HKDF empty salt | OPEN (low risk) | — |
+| T5 | OK | IV birthday bound | SAFE | analysis |
+| T6 | OK | Recovery code 192-bit + 600k PBKDF2 | SAFE | — |
+| T7 | LOW | Group key extractable | OPEN | — |
+| T8 | MED | No sender identity binding | OPEN (partially covered by T1 signing) | — |
+| T9 | INFO | state.myKeys verify | ADDRESSED | — |
+| T10 | MED | No key pinning/rotation | **PARTIAL** | TOFU pins; no rotation UI |
 
-## 3. Checklist (for fix PRs)
-- [ ] Add safety numbers / QR verification for identity keys (TOFU at minimum).
-- [ ] Add AAD to encrypt/decrypt: `sender || recipient || timestamp || counter`.
-- [ ] Add monotonic message counter + reject replays.
-- [ ] HKDF salt: use `enc.encode("rasan-v1-salt")` (non-empty).
-- [ ] Document no-PFS design decision (or add Double Ratchet later).
-- [ ] Group key: consider non-extractable + re-wrap on rotation.
-- [ ] Verify `state.myKeys` contains only key material.
+## T1 — Mitigation Detail
 
-## 4. Test vectors (to add)
-- ECDH symmetry: A.derive(B) === B.derive(A) (shared secret equal).
-- Roundtrip: encrypt then decrypt returns original (text + file + group key).
-- Tamper: flipping 1 bit in ciphertext/iv/tag must throw on decrypt.
-- Wrong key: decrypt with different shared key must throw.
-- Recovery: createKeyBackup then restoreFromBackup with correct code succeeds; wrong code throws.
-- Replay: same (ct, iv) decrypts twice (currently) — document expected behavior until T2 fixed.
+**Attack:** Active MITM substitutes public keys during ECDH exchange → intercepts all messages.
 
-## 5. Non-goals (v1)
-- No metadata protection (server sees who talks to whom).
-- No anonymity / onion routing.
-- No post-quantum (P-256 is not PQ-safe).
+**Mitigation layers:**
+1. **Identity keypair** (ECDSA P-256, long-term) signs every ephemeral ECDH key.
+2. **TOFU store** (IndexedDB) pins the peer's identity key on first contact.
+3. **`tofuCheck`** returns `new` / `same` / `changed`. On `changed`:
+   - `changedAt` timestamp recorded
+   - stored key **NOT replaced** (preserves detection)
+4. **Safety Numbers** — SHA-256 of sorted identity keys → 12×5 digits (Signal-style).
+   Both parties compute the same number.
+5. **QR verification** — payload `{v,u,k}` (public only) for in-person verification.
+6. **UI warning** — danger banner + input disabled on `changed`.
 
-## 6. References
-- Web Crypto API (W3C)
-- RFC 5869 (HKDF), RFC 5116 (AES-GCM)
-- Signal Double Ratchet (future work for PFS)
+**Tests proving mitigation** (tests/identity.test.js + tests/ui-identity.test.js, 15 passing):
+- `generateSafetyNumber` symmetry — Alice/Bob get identical numbers
+- `generateSafetyNumber` differs on key change
+- ephemeral signature round-trip
+- MITM on signature rejected
+- TOFU: changed key → 'changed', no replacement
+- QR: no private key leak
+- QR: rejects invalid version / missing fields
+- UI: danger banner + input disabled on 'changed'
+- UI: warning banner on 'new'
+- UI: success banner on 'same' + verified
+- UI: confirmVerified saves verified state
+
+**Residual risk:**
+- User must actually compare safety numbers / scan QR — TOFU alone only warns on change, doesn't prevent first-contact MITM.
+
+## T3 — Forward Secrecy (open)
+Ephemeral ECDH keys are signed by long-term identity keys, but session keys
+are derived from long-term material. Compromise of long-term keys decrypts
+past sessions. Fix planned: double-ratchet or per-session ephemeral + key
+erasure after use.
+
+## T2 — AAD (open)
+AES-GCM without Additional Authenticated Data → ciphertext replayable across
+messages. Fix: bind message index + sender ID as AAD.
+
+## T8 — Sender binding (open)
+Recipient does not cryptographically verify sender identity inside the
+envelope. Partially mitigated by T1 (ephemeral signing). Fix: include sender
+identity key fingerprint in signed payload.
