@@ -79,14 +79,22 @@ globalThis.RasanIdentity = (() => {
     const peer = await getPeer(userId);
     if (!peer) {
       await storePeer(userId, identityPubB64);
-      return { status: "new", peer: null };
+      return "new";
     }
     if (peer.identityPub === identityPubB64) {
-      return { status: "same", peer };
+      return "same";
     }
     // MITM warning: record changedAt WITHOUT replacing the stored key.
     peer.changedAt = Date.now();
-    return { status: "changed", peer }; // MITM warning!
+    // persist changedAt only (key stays untouched)
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(peer);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = (e) => reject(e.target.error);
+    });
+    return "changed"; // MITM warning!
   }
 
   // ---- Safety Numbers (Signal-style) ----
