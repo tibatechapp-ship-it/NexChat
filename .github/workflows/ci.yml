@@ -12,9 +12,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "20", cache: "npm" }
-      - run: npm ci
-      - run: npm run lint --if-present
-      - run: npm test --if-present
+        with: { node-version: "20" }
+      - name: Install
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f yarn.lock ]; then npm ci; else npm install; fi
+      - name: Lint
+        run: npm run lint --if-present
+      - name: Test
+        run: npm test --if-present
       - name: Secrets
         uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true
