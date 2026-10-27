@@ -5,8 +5,8 @@ import * as session from '../web/session.js';
 describe('session ephemeral keys', () => {
   it('generates unique ephemeral key per session', async () => {
     const kp = await identity.genIdentityKeypair();
-    const s1 = await session.initSession(kp.privateKey);
-    const s2 = await session.initSession(kp.privateKey);
+    const s1 = await session.initSession(kp.privateKey, kp.publicKey, kp.publicKey);
+    const s2 = await session.initSession(kp.privateKey, kp.publicKey, kp.publicKey);
     expect(s1.ephPubB64).not.toBe(s2.ephPubB64);
     expect(s1.signature).toBeTruthy();
   });
@@ -15,8 +15,8 @@ describe('session ephemeral keys', () => {
     const alice = await identity.genIdentityKeypair();
     const bob = await identity.genIdentityKeypair();
 
-    const aliceSession = await session.initSession(alice.privateKey);
-    const bobSession = await session.initSession(bob.privateKey);
+    const aliceSession = await session.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+    const bobSession = await session.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
     const skA = await session.deriveSessionKey(aliceSession, bobSession.ephPubB64, bobSession.signature, bob.publicKey);
     const skB = await session.deriveSessionKey(bobSession, aliceSession.ephPubB64, aliceSession.signature, alice.publicKey);
@@ -31,8 +31,8 @@ describe('session ephemeral keys', () => {
     const bob = await identity.genIdentityKeypair();
     const mallory = await identity.genIdentityKeypair();
 
-    const aliceSession = await session.initSession(alice.privateKey);
-    const bobSession = await session.initSession(bob.privateKey);
+    const aliceSession = await session.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+    const bobSession = await session.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
     const badSig = await identity.signEphemeral(mallory.privateKey, bobSession.ephPubB64);
 
@@ -45,8 +45,8 @@ describe('session ephemeral keys', () => {
     const alice = await identity.genIdentityKeypair();
     const bob = await identity.genIdentityKeypair();
 
-    const aliceSession = await session.initSession(alice.privateKey);
-    const bobSession = await session.initSession(bob.privateKey);
+    const aliceSession = await session.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+    const bobSession = await session.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
     const skA = await session.deriveSessionKey(aliceSession, bobSession.ephPubB64, bobSession.signature, bob.publicKey);
     const skB = await session.deriveSessionKey(bobSession, aliceSession.ephPubB64, aliceSession.signature, alice.publicKey);
@@ -64,8 +64,8 @@ describe('session ephemeral keys', () => {
     const alice = await identity.genIdentityKeypair();
     const bob = await identity.genIdentityKeypair();
 
-    const aliceSession = await session.initSession(alice.privateKey);
-    const bobSession = await session.initSession(bob.privateKey);
+    const aliceSession = await session.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+    const bobSession = await session.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
     const skA = await session.deriveSessionKey(aliceSession, bobSession.ephPubB64, bobSession.signature, bob.publicKey);
     const skB = await session.deriveSessionKey(bobSession, aliceSession.ephPubB64, aliceSession.signature, alice.publicKey);
@@ -105,5 +105,41 @@ describe('session ephemeral keys', () => {
     expect(session.sameEphemeral(s1, s2)).toBe(true);
     const s3 = await session.initSession(alice.privateKey);
     expect(session.sameEphemeral(s1, s3)).toBe(false);
+  });
+});
+
+describe('T8: automatic sender binding', () => {
+  it('myFingerprint/peerFingerprint auto-set (not empty)', async () => {
+    const alice = await identity.genIdentityKeypair();
+    const bob = await identity.genIdentityKeypair();
+
+    const aliceSession = await session.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+    const bobSession = await session.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
+
+    expect(aliceSession.myFingerprint).toHaveLength(16);
+    expect(aliceSession.peerFingerprint).toHaveLength(16);
+    expect(bobSession.myFingerprint).toBe(aliceSession.peerFingerprint);
+    expect(bobSession.peerFingerprint).toBe(aliceSession.myFingerprint);
+  });
+
+  it('AAD contains non-empty sender (tampering fails)', async () => {
+    const alice = await identity.genIdentityKeypair();
+    const bob = await identity.genIdentityKeypair();
+
+    const aliceSession = await session.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+    const bobSession = await session.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
+
+    const skA = await session.deriveSessionKey(aliceSession, bobSession.ephPubB64, bobSession.signature, bob.publicKey);
+    const skB = await session.deriveSessionKey(bobSession, aliceSession.ephPubB64, aliceSession.signature, alice.publicKey);
+
+    const aad = session.buildAAD(aliceSession.myFingerprint, aliceSession.peerFingerprint, 0, 'conv-1');
+    const ct = await session.encrypt(skA, 'msg', aad);
+
+    // Tamper: change peerFingerprint on bob's side -> AAD mismatch -> decrypt fails
+    const tamperedSession = { ...bobSession, peerFingerprint: 'ffffffffffffffff' };
+    const tamperedAad = session.buildAAD(tamperedSession.myFingerprint, tamperedSession.peerFingerprint, 0, 'conv-1');
+    await expect(
+      session.decrypt(skB, ct.ciphertext, ct.iv, tamperedAad)
+    ).rejects.toThrow();
   });
 });

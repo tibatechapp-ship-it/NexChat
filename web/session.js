@@ -9,6 +9,13 @@ window.RasanSession = (() => {
 
   const ID = () => crypto.randomUUID();
 
+  async function shortFingerprint(pubKeyB64) {
+    const raw = unb64(pubKeyB64);
+    const hash = await crypto.subtle.digest("SHA-256", raw);
+    const bytes = new Uint8Array(hash).slice(0, 8);
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
   // Identity helpers come from RasanIdentity (loaded before this module).
   function identity() {
     return (typeof globalThis !== "undefined" && globalThis.RasanIdentity) || (typeof window !== "undefined" && window.RasanIdentity) || null;
@@ -23,19 +30,25 @@ window.RasanSession = (() => {
   }
 
   // Init a session: generate ephemeral keypair + sign it with long-term identity key.
-  async function initSession(identityPrivB64) {
+  async function initSession(identityPrivB64, identityPubB64, peerIdentityPubB64) {
     const eph = await genEphemeralKeypair();
     const id = identity();
     let signature = null;
     if (id && typeof id.signEphemeral === "function") {
       signature = await id.signEphemeral(identityPrivB64, eph.publicKey);
     }
+    const myFingerprint = identityPubB64 ? await shortFingerprint(identityPubB64) : "";
+    const peerFingerprint = peerIdentityPubB64 ? await shortFingerprint(peerIdentityPubB64) : "";
     return {
       id: ID(),
       myEph: eph,
       ephPubB64: eph.publicKey,
       signature,
       identityPrivB64,
+      identityPubB64: identityPubB64 || null,
+      peerIdentityPubB64: peerIdentityPubB64 || null,
+      myFingerprint,
+      peerFingerprint,
       sendCount: 0,
       recvCount: 0,
     };

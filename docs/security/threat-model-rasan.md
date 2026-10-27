@@ -19,7 +19,7 @@ zero runtime dependencies except vendored qrcode-generator (MIT, ~20KB).
 | T5 | OK | IV birthday bound | SAFE | analysis |
 | T6 | OK | Recovery code 192-bit + 600k PBKDF2 | SAFE | — |
 | T7 | LOW | Group key extractable | OPEN | — |
-| T8 | MED | No sender identity binding | OPEN (partially covered by T1 signing) | — |
+| T8 | MED | No sender identity binding | **MITIGATED** | sender fingerprint (SHA-256 pubkey[:8]) in AAD |
 | T9 | INFO | state.myKeys verify | ADDRESSED | — |
 | T10 | MED | No key pinning/rotation | **PARTIAL** | TOFU pins; no rotation UI |
 
@@ -64,7 +64,7 @@ Tests: session.test.js (endSession nulls all key material).
 AES-GCM now uses Additional Authenticated Data: {sender, recipient, msgIndex, conversationId}.
 Replay/reorder/spoof → decrypt fails. Tests: session.test.js (2 cases).
 
-## T8 — Sender binding (open)
-Recipient does not cryptographically verify sender identity inside the
-envelope. Partially mitigated by T1 (ephemeral signing). Fix: include sender
-identity key fingerprint in signed payload.
+## T8 — Sender binding (MITIGATED)
+Sender fingerprint (SHA-256 of identity pubkey, first 8 bytes) is included in AAD.
+Any spoofing attempt -> AAD mismatch -> decrypt fails.
+Tests: session.test.js (2 T8 cases: auto-bind + tamper detection).

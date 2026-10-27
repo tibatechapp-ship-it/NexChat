@@ -9,8 +9,8 @@ const I = globalThis.RasanIdentity;
 
 test("initSession generates unique ephemeral key per session", async () => {
   const kp = await I.genIdentityKeypair();
-  const s1 = await S.initSession(kp.privateKey);
-  const s2 = await S.initSession(kp.privateKey);
+  const s1 = await S.initSession(kp.privateKey, kp.publicKey, kp.publicKey);
+  const s2 = await S.initSession(kp.privateKey, kp.publicKey, kp.publicKey);
   assert.notEqual(s1.ephPubB64, s2.ephPubB64, "ephemeral keys must differ");
   assert.ok(s1.signature, "signature present");
 });
@@ -19,8 +19,8 @@ test("deriveSessionKey verifies signature and produces a key", async () => {
   const alice = await I.genIdentityKeypair();
   const bob = await I.genIdentityKeypair();
 
-  const aliceSession = await S.initSession(alice.privateKey);
-  const bobSession = await S.initSession(bob.privateKey);
+  const aliceSession = await S.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+  const bobSession = await S.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
   const skA = await S.deriveSessionKey(aliceSession, bobSession.ephPubB64, bobSession.signature, bob.publicKey);
   const skB = await S.deriveSessionKey(bobSession, aliceSession.ephPubB64, aliceSession.signature, alice.publicKey);
@@ -36,8 +36,8 @@ test("MITM: invalid signature throws", async () => {
   const bob = await I.genIdentityKeypair();
   const mallory = await I.genIdentityKeypair();
 
-  const aliceSession = await S.initSession(alice.privateKey);
-  const bobSession = await S.initSession(bob.privateKey);
+  const aliceSession = await S.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+  const bobSession = await S.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
   // mallory signs bob's ephemeral with her own key
   const badSig = await I.signEphemeral(mallory.privateKey, bobSession.ephPubB64);
@@ -52,8 +52,8 @@ test("AAD: replay with wrong msgIndex fails decrypt", async () => {
   const alice = await I.genIdentityKeypair();
   const bob = await I.genIdentityKeypair();
 
-  const aliceSession = await S.initSession(alice.privateKey);
-  const bobSession = await S.initSession(bob.privateKey);
+  const aliceSession = await S.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+  const bobSession = await S.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
   const skA = await S.deriveSessionKey(aliceSession, bobSession.ephPubB64, bobSession.signature, bob.publicKey);
   const skB = await S.deriveSessionKey(bobSession, aliceSession.ephPubB64, aliceSession.signature, alice.publicKey);
@@ -73,8 +73,8 @@ test("AAD: wrong sender fingerprint fails decrypt", async () => {
   const alice = await I.genIdentityKeypair();
   const bob = await I.genIdentityKeypair();
 
-  const aliceSession = await S.initSession(alice.privateKey);
-  const bobSession = await S.initSession(bob.privateKey);
+  const aliceSession = await S.initSession(alice.privateKey, alice.publicKey, bob.publicKey);
+  const bobSession = await S.initSession(bob.privateKey, bob.publicKey, alice.publicKey);
 
   const skA = await S.deriveSessionKey(aliceSession, bobSession.ephPubB64, bobSession.signature, bob.publicKey);
   const skB = await S.deriveSessionKey(bobSession, aliceSession.ephPubB64, aliceSession.signature, alice.publicKey);
