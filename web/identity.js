@@ -1,6 +1,6 @@
 // Rasan Identity — TOFU + Safety Numbers (Web Crypto only, 0KB deps)
 // Long-term identity keypair (ECDSA P-256) used to authenticate ephemeral ECDH keys.
-window.RasanIdentity = (() => {
+globalThis.RasanIdentity = (() => {
   const enc = new TextEncoder();
   const dec = new TextDecoder();
 
@@ -128,3 +128,8 @@ window.RasanIdentity = (() => {
     b64, unb64,
   };
 })();
+
+// Node/test export (no-op in browser)
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = globalThis.RasanIdentity;
+}
