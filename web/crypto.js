@@ -25,13 +25,17 @@ window.RasanCrypto = (() => {
   }
 
   // Text encrypt/decrypt
-  async function encrypt(key, plaintext) {
+  async function encrypt(key, plaintext, aad) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plaintext));
+    const params = { name: "AES-GCM", iv };
+    if (aad) params.additionalData = (typeof aad === "string") ? enc.encode(aad) : aad;
+    const ct = await crypto.subtle.encrypt(params, key, enc.encode(plaintext));
     return { ciphertext: b64(ct), iv: b64(iv) };
   }
-  async function decrypt(key, ctB64, ivB64) {
-    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(ivB64) }, key, unb64(ctB64));
+  async function decrypt(key, ctB64, ivB64, aad) {
+    const params = { name: "AES-GCM", iv: unb64(ivB64) };
+    if (aad) params.additionalData = (typeof aad === "string") ? enc.encode(aad) : aad;
+    const pt = await crypto.subtle.decrypt(params, key, unb64(ctB64));
     return dec.decode(pt);
   }
 

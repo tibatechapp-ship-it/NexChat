@@ -4,7 +4,7 @@
 
 ## الميزات
 
-- ✅ E2EE افتراضي (ECDH P-256 + AES-GCM عبر Web Crypto — 0 runtime deps)
+- ✅ E2EE (ECDH P-256 + AES-GCM + TOFU identity + per-session forward secrecy + AAD anti-replay)
 - ✅ تحقق من الهوية (TOFU + أرقام أمان + QR) — vendored qrcode-generator (MIT, ~20KB)
 - ✅ بدون رقم هاتف (اسم مستخدم)
 - ✅ قنوات بث (50K) + مجموعات (50K)

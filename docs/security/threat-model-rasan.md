@@ -13,8 +13,8 @@ zero runtime dependencies except vendored qrcode-generator (MIT, ~20KB).
 | ID | Severity | Finding | Status | Evidence |
 |---|---|---|---|---|
 | T1 | HIGH | MITM on key exchange — no TOFU/safety numbers/QR | **MITIGATED** | commit 0365ed3; 15 tests |
-| T2 | MED | No AAD → replay/reordering possible | OPEN | — |
-| T3 | MED | No forward secrecy (long-term keys) | OPEN | — |
+| T2 | MED | No AAD → replay/reordering possible | **MITIGATED** | session.js AAD (msgIndex + sender fp) |
+| T3 | MED | No forward secrecy (long-term keys) | **MITIGATED** | per-session ephemeral + key erasure |
 | T4 | LOW | HKDF empty salt | OPEN (low risk) | — |
 | T5 | OK | IV birthday bound | SAFE | analysis |
 | T6 | OK | Recovery code 192-bit + 600k PBKDF2 | SAFE | — |
@@ -54,15 +54,15 @@ zero runtime dependencies except vendored qrcode-generator (MIT, ~20KB).
 **Residual risk:**
 - User must actually compare safety numbers / scan QR — TOFU alone only warns on change, doesn't prevent first-contact MITM.
 
-## T3 — Forward Secrecy (open)
-Ephemeral ECDH keys are signed by long-term identity keys, but session keys
-are derived from long-term material. Compromise of long-term keys decrypts
-past sessions. Fix planned: double-ratchet or per-session ephemeral + key
-erasure after use.
+## T3 — Forward Secrecy (MITIGATED)
+Per-session ephemeral ECDH keys (signed by long-term identity key).
+Session key derived from ephemeral×ephemeral. Key erasure on endSession.
+Compromise of long-term key later ≠ decrypt past sessions.
+Tests: session.test.js (endSession nulls all key material).
 
-## T2 — AAD (open)
-AES-GCM without Additional Authenticated Data → ciphertext replayable across
-messages. Fix: bind message index + sender ID as AAD.
+## T2 — AAD (MITIGATED)
+AES-GCM now uses Additional Authenticated Data: {sender, recipient, msgIndex, conversationId}.
+Replay/reorder/spoof → decrypt fails. Tests: session.test.js (2 cases).
 
 ## T8 — Sender binding (open)
 Recipient does not cryptographically verify sender identity inside the
