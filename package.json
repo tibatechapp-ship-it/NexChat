@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "رسن — تطبيق دردشة مشفّر نهاية-ل-نهاية (client + web + tests)",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
