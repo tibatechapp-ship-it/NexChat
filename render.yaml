@@ -1,17 +1,40 @@
+# Rasan — the ONE deploy path
+#
+# Why Render and not Vercel: this app is a single Node process that serves the
+# static client (`web/`), the REST API and Socket.IO on the SAME origin, and it
+# keeps its database in SQLite on a mounted disk. The client is hard-wired to
+# that origin (`fetch("/api/…")`, `io()` with no URL), so splitting the UI onto
+# a static host would leave the chat without an API. Vercel cannot run this
+# shape: no persistent disk, no long-lived Socket.IO server.
+#
+# Deploys are triggered by CI, not by the platform: `autoDeploy: false` +
+# .github/workflows/deploy-render.yml posts the deploy hook only after the
+# `ci` workflow succeeds on main, then polls /health until the LIVE commit
+# matches the pushed commit.
+#
+# One instance on purpose: Socket.IO state and the SQLite disk belong to a
+# single process — scaling past one instance needs a shared store and a real
+# database first.
+
 services:
   - type: web
     name: rasan-server
     runtime: node
     rootDir: server
-    plan: starter
+    plan: starter            # free tier has no persistent disk → SQLite would reset
     region: frankfurt
     branch: main
-    buildCommand: npm install
+    autoDeploy: false        # CI decides when to deploy (green tests, then hook)
+    healthCheckPath: /health
+    buildCommand: npm install --no-audit --no-fund
     startCommand: node server.js
+    numInstances: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: JWT_SECRET
+        generateValue: true
+      - key: STATS_KEY
         generateValue: true
       - key: DATA_DIR
         value: /opt/render/project/src/data

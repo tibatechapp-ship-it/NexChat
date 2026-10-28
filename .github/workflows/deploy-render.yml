@@ -1,0 +1,105 @@
+name: Deploy (Render)
+
+# The one deploy path: CI must be green on main, then Render is asked to deploy.
+# Nothing deploys on a red build, and nothing deploys because someone pushed —
+# `autoDeploy: false` lives in render.yaml on purpose.
+#
+# Setup (one time, in the GitHub repo settings):
+#   Render dashboard → rasan-server → Settings → Deploy Hook → copy the URL
+#   gh secret set RENDER_DEPLOY_HOOK -R tibatechapp-ship-it/Rasan
+#   gh variable set RASAN_SITE_URL -R tibatechapp-ship-it/Rasan --body https://<service>.onrender.com
+#
+# Without the secret this workflow fails loudly instead of pretending to deploy:
+# a silent skip is how a product ships from three commits ago.
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-render
+  cancel-in-progress: false   # a deploy already running must finish; Render queues
+
+jobs:
+  deploy:
+    name: deploy after green CI
+    # workflow_run fires for failures too — those must never reach the hook.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Resolve the commit being deployed
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            sha="${{ github.event.workflow_run.head_sha }}"
+          else
+            sha="$(git ls-remote https://github.com/${{ github.repository }}.git refs/heads/main | cut -f1)"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+          echo "deploying ${sha}"
+
+      - name: Deploy hook is configured
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "${HOOK:-}" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK is missing — renders nothing. Create it: Render → rasan-server → Settings → Deploy Hook, then 'gh secret set RENDER_DEPLOY_HOOK'."
+            exit 1
+          fi
+          case "$HOOK" in
+            https://api.render.com/deploy/*) echo "hook shape OK" ;;
+            *) echo "::error::RENDER_DEPLOY_HOOK does not look like a Render deploy hook (https://api.render.com/deploy/…)"; exit 1 ;;
+          esac
+
+      - name: Trigger the deploy
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          # -f: an HTTP error must fail the job. -s: no progress noise. The
+          # response carries {"deploy":{"id":"dep-…"}}; we keep it for the log.
+          code="$(curl -sS -o /tmp/deploy.json -w '%{http_code}' -X POST "$HOOK")"
+          echo "hook responded $code"
+          cat /tmp/deploy.json || true
+          case "$code" in
+            200|201|202) ;;
+            *) echo "::error::deploy hook failed with HTTP $code"; exit 1 ;;
+          esac
+
+      - name: Wait until the LIVE commit matches
+        env:
+          SITE: ${{ vars.RASAN_SITE_URL }}
+          EXPECT: ${{ steps.target.outputs.short }}
+        run: |
+          if [ -z "${SITE:-}" ]; then
+            echo "::warning::RASAN_SITE_URL is not set — deploy triggered, but this step cannot prove the new code is live. Set it: gh variable set RASAN_SITE_URL --body https://<service>.onrender.com"
+            exit 0
+          fi
+          echo "waiting for $SITE/health to report commit $EXPECT"
+          for i in $(seq 1 60); do
+            body="$(curl -fsS --max-time 10 "$SITE/health" 2>/dev/null)" || body=""
+            if [ -n "$body" ]; then
+              live="$(printf '%s' "$body" | grep -o '"commit":"[^"]*"' | cut -d'"' -f4 || true)"
+              uptime="$(printf '%s' "$body" | grep -o '"uptime":[0-9.]*' | cut -d: -f2 || true)"
+              echo "[$i] live commit=${live:-?} uptime=${uptime:-?}s"
+              # A 200 is NOT success: only the commit proves the deploy landed.
+              if [ "$live" = "$EXPECT" ]; then
+                echo "::notice::deploy verified — $SITE is serving $EXPECT"
+                exit 0
+              fi
+            fi
+            sleep 20
+          done
+          echo "::error::/health never reported commit $EXPECT (see the Render service logs)"
+          exit 1
