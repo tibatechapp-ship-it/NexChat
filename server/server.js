@@ -29,7 +29,15 @@ const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 }
 
 push.init();
 
-app.get("/health", (_q, res) => res.json({ ok: true, uptime: process.uptime() }));
+// Deployment identity. Render exports the commit it is serving, so a post-deploy
+// check can prove that the LIVE process runs the code which just landed — a 200
+// from a stale container proves nothing about the deploy.
+const COMMIT = (process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || "").slice(0, 7);
+const VERSION = require("./package.json").version;
+
+app.get("/health", (_q, res) =>
+  res.json({ ok: true, uptime: process.uptime(), version: VERSION, commit: COMMIT })
+);
 app.get("/api/stats", (req, res) => {
   const key = req.query.key;
   if (key !== process.env.STATS_KEY) return res.status(403).json({ error: "forbidden" });
