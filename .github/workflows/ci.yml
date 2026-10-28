@@ -11,17 +11,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # Fail closed: a missing package.json / test script is an ERROR, never a silent skip.
+      - name: Verify the test surface exists
+        run: |
+          test -f package.json || { echo "package.json missing"; exit 1; }
+          node -e "const s=require('./package.json').scripts||{}; if(!s.test){console.error('no test script');process.exit(1)}"
+
       - name: Install
         run: |
-          if [ -f package.json ]; then
-            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f yarn.lock ]; then npm ci; else npm install; fi
-          else
-            echo "no package.json - skip (Dart/other project)"
-          fi
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+
       - name: Lint
-        run: if [ -f package.json ]; then npm run lint --if-present; else echo "skip"; fi
+        run: npm run lint
+
       - name: Test
-        run: if [ -f package.json ]; then npm test --if-present; else echo "skip"; fi
+        run: npm test
+
       - name: Secrets
         uses: gitleaks/gitleaks-action@v2
         continue-on-error: true
