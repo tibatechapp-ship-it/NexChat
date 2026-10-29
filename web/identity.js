@@ -163,3 +163,20 @@ globalThis.RasanIdentity = (() => {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = globalThis.RasanIdentity;
 }
+
+// ES module exports — makes `import { tofuCheck } from './identity.js'` work in the browser
+// (fixes the dead ui-identity.js module) and keeps vitest named imports working.
+const RasanIdentity = globalThis.RasanIdentity;
+const {
+  genIdentityKeypair, importPriv, importPub,
+  signEphemeral, verifyEphemeral,
+  storePeer, getPeer, tofuCheck, markPeerVerified, isPeerVerified,
+  generateSafetyNumber, qrPayload, parseQR,
+} = RasanIdentity;
+
+export {
+  genIdentityKeypair, importPriv, importPub,
+  signEphemeral, verifyEphemeral,
+  storePeer, getPeer, tofuCheck, markPeerVerified, isPeerVerified,
+  generateSafetyNumber, qrPayload, parseQR,
+};
