@@ -37,6 +37,16 @@ Exhaustive import scan (`require`/`from` across `server/`, `web/`, `tests/`,
 
 **Action:** nothing to remove — the dependency list is already minimal.
 
+**Second pass — one flag:** `server/push.js` does
+`try { admin = require("firebase-admin") } catch { admin = null }` — an
+**optional, undocumented** dependency: push notifications silently disable
+when the package is absent, and it is deliberately not in `package.json`.
+Deliberate (keeps the default install light), but worth a decision: either
+add `firebase-admin` to `dependencies` (heavier install, push always
+available) or declare it in `optionalDependencies` (npm installs it when it
+can, push still degrades gracefully). Left untouched — behavior is correct
+as-is.
+
 ## 3. Dev experience (added)
 
 | File | Purpose |
@@ -74,6 +84,10 @@ just with the client fetched at that moment instead of at page load.
   session, ui-identity, deploy-config suites).
 * `node --check` clean on all modified files (`app.js`, `ui-identity.js`).
 * `npm run lint` (syntax gate) — clean.
+* Second pass re-verification: `npm audit` 0 vulnerabilities (root +
+  `server/`), `make test` → 41/41, lazy-load contract intact (no blocking
+  `/socket.io/socket.io.js` or `/vendor/qrcode.min.js` in `index.html`;
+  loaders cached on first use; SW cache `rasan-v2`).
 
 ## 6. Not touched (flagged for visibility)
 
