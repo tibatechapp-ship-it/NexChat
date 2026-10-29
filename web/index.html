@@ -21,8 +21,11 @@
       <button class="tab" data-mode="register" data-i18n="register">حساب جديد</button>
     </div>
     <form id="auth-form">
-      <input id="username" placeholder="اسم المستخدم" autocomplete="username" required />
-      <input id="password" type="password" placeholder="كلمة المرور" required />
+      <label class="sr-only" for="username" data-i18n="usernamePh">اسم المستخدم</label>
+      <input id="username" data-i18n-placeholder="usernamePh" placeholder="اسم المستخدم" autocomplete="username" required />
+      <label class="sr-only" for="password" data-i18n="passwordPh">كلمة المرور</label>
+      <input id="password" type="password" data-i18n-placeholder="passwordPh" placeholder="كلمة المرور" autocomplete="current-password" required />
+      <label class="sr-only" for="locale">اللغة / Language</label>
       <select id="locale">
         <option value="ar">العربية</option>
         <option value="en">English</option>
@@ -39,37 +42,61 @@
       </select>
       <button type="submit" id="submit" data-i18n="login">دخول</button>
     </form>
-    <p id="err" class="err"></p>
+    <p id="err" class="err" role="alert" aria-live="assertive"></p>
   </div>
 </section>
 
 <!-- Main app -->
 <main id="app" class="app hidden">
   <header>
-    <button id="back" class="icon hidden">←</button>
+    <button id="back" class="icon hidden" aria-label="رجوع" title="رجوع">←</button>
     <h2 id="title">رسن</h2>
     <div class="actions">
-      <button id="rotate-key" class="icon hidden" title="تدوير مفتاح المجموعة">🔄</button>
-      <button id="new-chat" class="icon" title="محادثة جديدة">+</button>
-      <button id="new-group" class="icon" title="مجموعة">👥</button>
-      <button id="stories-btn" class="icon" title="ستوري">◉</button>
-      <button id="logout" class="icon" title="خروج">⎋</button>
+      <button id="rotate-key" class="icon hidden" aria-label="تدوير مفتاح المجموعة" title="تدوير مفتاح المجموعة">🔄</button>
+      <button id="new-chat" class="icon" aria-label="محادثة جديدة" title="محادثة جديدة">+</button>
+      <button id="new-group" class="icon" aria-label="مجموعة جديدة" title="مجموعة">👥</button>
+      <button id="stories-btn" class="icon" aria-label="ستوري" title="ستوري">◉</button>
+      <button id="logout" class="icon" aria-label="تسجيل الخروج" title="خروج">⎋</button>
     </div>
   </header>
   <section id="list" class="list"></section>
   <section id="chat" class="chat hidden">
-    <div id="security-banner" class="security-banner security-warning" role="status" aria-live="polite"><span>جارٍ التحقق...</span></div>
-    <div id="messages" class="messages"></div>
-    <p id="typing" class="typing"></p>
+    <div id="security-banner" class="security-banner hidden" role="status" aria-live="polite"></div>
+    <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+    <p id="typing" class="typing" aria-live="polite"></p>
     <form id="send-form" class="composer">
-      <input id="msg-input" placeholder="اكتب رسالة..." autocomplete="off" />
-      <button type="button" id="attach" class="icon" style="border:0;background:transparent;font-size:20px;cursor:pointer">📎</button>
-      <input type="file" id="file-input" hidden />
-      <button type="button" id="attach" class="icon">📎</button>
-      <button type="submit" class="send">➤</button>
+      <label class="sr-only" for="msg-input" data-i18n="messagePh">اكتب رسالة...</label>
+      <input id="msg-input" data-i18n-placeholder="messagePh" placeholder="اكتب رسالة..." autocomplete="off" />
+      <input type="file" id="file-input" hidden aria-hidden="true" />
+      <button type="button" id="attach" class="icon" aria-label="إرفاق ملف" title="إرفاق">📎</button>
+      <button type="submit" id="send-btn" class="send" aria-label="إرسال" title="إرسال">➤</button>
     </form>
   </section>
 </main>
+
+<!-- New chat choice modal -->
+<section id="new-chat-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="new-chat-title">
+  <div class="modal-card">
+    <h3 id="new-chat-title" data-i18n="newChat">محادثة جديدة</h3>
+    <button id="choice-dm" class="choice-btn">💬 <span data-i18n="newDM">محادثة خاصة</span></button>
+    <button id="choice-group" class="choice-btn">👥 <span data-i18n="newGroup">مجموعة / قناة</span></button>
+    <button id="close-new-chat" class="btn-secondary" data-i18n="close">إغلاق</button>
+  </div>
+</section>
+
+<!-- New DM modal -->
+<section id="dm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dm-title">
+  <div class="modal-card">
+    <h3 id="dm-title" data-i18n="newDM">محادثة خاصة</h3>
+    <label for="dm-username" data-i18n="dmUsername">اسم المستخدم للطرف الآخر</label>
+    <input id="dm-username" data-i18n-placeholder="dmUsername" autocomplete="off" />
+    <p id="dm-err" class="err" role="alert" aria-live="assertive"></p>
+    <div class="modal-actions">
+      <button id="create-dm" class="btn-primary" data-i18n="create">إنشاء</button>
+      <button id="close-dm" class="btn-secondary" data-i18n="close">إغلاق</button>
+    </div>
+  </div>
+</section>
 
 <!-- Stories modal -->
 <section id="stories" class="modal hidden">
@@ -77,7 +104,8 @@
     <h3 data-i18n="stories">ستوريات (24 ساعة)</h3>
     <div id="stories-list" class="stories-grid"></div>
     <form id="story-form">
-      <input id="story-text" placeholder="نص الستوري..." required />
+      <label class="sr-only" for="story-text" data-i18n="storyPh">نص الستوري...</label>
+      <input id="story-text" data-i18n-placeholder="storyPh" placeholder="نص الستوري..." required />
       <button type="submit" data-i18n="post">نشر</button>
     </form>
     <button id="close-stories" class="btn-secondary" data-i18n="close">إغلاق</button>
@@ -88,13 +116,18 @@
 <section id="group-modal" class="modal hidden">
   <div class="modal-card">
     <h3 data-i18n="newGroup">مجموعة جديدة</h3>
-    <input id="group-name" placeholder="اسم المجموعة" />
-    <textarea id="group-desc" placeholder="وصف (اختياري)" rows="2"></textarea>
+    <label class="sr-only" for="group-name" data-i18n="groupNamePh">اسم المجموعة</label>
+    <input id="group-name" data-i18n-placeholder="groupNamePh" placeholder="اسم المجموعة" />
+    <label class="sr-only" for="group-desc" data-i18n="groupDescPh">وصف (اختياري)</label>
+    <textarea id="group-desc" data-i18n-placeholder="groupDescPh" placeholder="وصف (اختياري)" rows="2"></textarea>
+    <label class="sr-only" for="group-type" data-i18n="groupTypeLabel">النوع</label>
     <select id="group-type">
       <option value="group">مجموعة</option>
       <option value="channel">قناة</option>
     </select>
-    <input id="group-members" placeholder="اسماء المستخدمين (مفصولة بفواصل)" />
+    <label class="sr-only" for="group-members" data-i18n="groupMembersPh">اسماء المستخدمين (مفصولة بفواصل)</label>
+    <input id="group-members" data-i18n-placeholder="groupMembersPh" placeholder="اسماء المستخدمين (مفصولة بفواصل)" />
+    <p id="group-err" class="err" role="alert" aria-live="assertive"></p>
     <div class="modal-actions">
       <button id="create-group" class="btn-primary" data-i18n="create">إنشاء</button>
       <button id="close-group" class="btn-secondary" data-i18n="close">إغلاق</button>
@@ -109,7 +142,7 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="/i18n.js"></script>
 <script src="/crypto.js"></script>
-<script src="/identity.js"></script>
+<script type="module" src="/identity.js"></script>
 <script src="/session.js"></script>
 <script src="/vendor/qrcode.min.js" defer></script>
 <script type="module" src="/ui-identity.js"></script>

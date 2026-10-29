@@ -37,6 +37,83 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// ===== UX helpers: modals, toasts, prompts (UX audit R-1/R-2) =====
+let _lastFocus = null;
+function openModal(id) {
+  const m = $(id);
+  if (!m) return;
+  _lastFocus = document.activeElement;
+  m.classList.remove("hidden");
+  const f = m.querySelector("input, textarea, select, button");
+  if (f) f.focus();
+}
+function closeModal(id) {
+  const m = $(id);
+  if (!m) return;
+  m.classList.add("hidden");
+  if (_lastFocus && document.contains(_lastFocus)) { try { _lastFocus.focus(); } catch {} }
+  _lastFocus = null;
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const open = [...document.querySelectorAll(".modal:not(.hidden), #verify-modal:not(.hidden)")];
+  if (!open.length) return;
+  e.preventDefault();
+  const top = open[open.length - 1];
+  if (top.id === "verify-modal") { top.classList.add("hidden"); top.setAttribute("aria-hidden", "true"); }
+  else closeModal(top.id);
+});
+document.addEventListener("click", (e) => {
+  const m = e.target.classList?.contains("modal") ? e.target : null;
+  if (m && m.id) closeModal(m.id);
+});
+
+function showToast(msg, type = "info") {
+  const t = document.createElement("div");
+  t.className = "toast toast-" + type;
+  t.setAttribute("role", type === "error" ? "alert" : "status");
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3800);
+}
+
+function t(key) { return I18N[state.locale]?.[key] ?? I18N.en[key] ?? I18N.ar[key] ?? key; }
+function translateErr(msg) {
+  const m = String(msg ?? "");
+  const map = (I18N[state.locale] || I18N.en).errors || I18N.en.errors || {};
+  return map[m] || map[m.toLowerCase()] || m;
+}
+
+// Promise-based text prompt (replaces window.prompt)
+function textPrompt({ title, initial = "", hint = "", confirmLabel }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("section");
+    wrap.className = "modal";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.innerHTML = `<div class="modal-card">
+      <h3>${escapeHtml(title)}</h3>
+      ${hint ? `<p class="recovery-hint">${escapeHtml(hint)}</p>` : ""}
+      <input id="tp-input" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="tp-ok" class="btn-primary">${escapeHtml(confirmLabel || t("save"))}</button>
+        <button id="tp-cancel" class="btn-secondary">${t("cancel")}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(wrap);
+    const input = wrap.querySelector("#tp-input");
+    input.value = initial;
+    input.focus();
+    input.select();
+    const done = (val) => { wrap.remove(); resolve(val); };
+    wrap.querySelector("#tp-ok").onclick = () => done(input.value);
+    wrap.querySelector("#tp-cancel").onclick = () => done(null);
+    wrap.addEventListener("click", (e) => { if (e.target === wrap) done(null); });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); done(input.value); } });
+  });
+}
+
 // ===== Auth =====
 document.querySelectorAll(".tab").forEach(tab => {
   tab.addEventListener("click", () => {
@@ -53,18 +130,26 @@ $("auth-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("err").textContent = "";
   const mode = $("submit").dataset.mode;
+  const btn = $("submit");
   state.locale = $("locale").value;
   localStorage.setItem("rasan_locale", state.locale);
   applyI18n(state.locale);
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = t("pleaseWait");
   try {
-    const kp = await RasanCrypto.genKeypair();
-    state.myKeys = kp;
-    await idbPut("myKeypair", kp);
-    localStorage.setItem("rasan_privkey", kp.privateKey);
-
+    if (mode === "register") {
+      // Keypair is generated ONLY on registration (fix: never clobber keys on login)
+      const kp = await RasanCrypto.genKeypair();
+      state.myKeys = kp;
+      await idbPut("myKeypair", kp);
+    } else {
+      // On login, reuse the locally stored keypair
+      state.myKeys = await idbGet("myKeypair");
+    }
     const path = mode === "login" ? "/api/auth/login" : "/api/auth/register";
     const body = { username: $("username").value.trim(), password: $("password").value };
-    if (mode === "register") { body.publicKey = kp.publicKey; body.locale = state.locale; }
+    if (mode === "register") { body.publicKey = state.myKeys.publicKey; body.locale = state.locale; }
     const data = await api(path, { method: "POST", body: JSON.stringify(body) });
     state.token = data.token;
     state.user = data.user;
@@ -74,35 +159,46 @@ $("auth-form").addEventListener("submit", async (e) => {
       const recoveryCode = RasanCrypto.generateRecoveryCode();
       const backup = await RasanCrypto.createKeyBackup(recoveryCode);
       await api("/api/auth/key-backup", { method: "POST", body: JSON.stringify(backup) });
-      showRecoveryCode(recoveryCode);
-    } else {
-      if (!state.myKeys) await promptRestore();
+      await showRecoveryCode(recoveryCode);
+    } else if (!state.myKeys) {
+      // New device without local keys — offer the restore flow
+      await promptRestore();
     }
     await enterApp();
-  } catch (err) { $("err").textContent = err.message; }
+  } catch (err) { $("err").textContent = translateErr(err.message); }
+  finally { btn.disabled = false; btn.textContent = originalText; }
 });
 
 function showRecoveryCode(code) {
-  const modal = document.createElement("div");
-  modal.className = "modal";
-  modal.innerHTML = `<div class="modal-card">
-    <h3>🔑 احفظ رمز الاستعادة</h3>
-    <p style="color:#8696a0;font-size:13px;margin-bottom:12px">هذا الرمز هو الطريقة الوحيدة لاستعادة رسائلك. اكتبه في مكان آمن.</p>
-    <div style="background:#202c33;padding:16px;border-radius:10px;font-family:monospace;font-size:13px;word-break:break-all;text-align:center;margin-bottom:12px">${code}</div>
-    <button id="copy-rec" class="icon" style="width:100%;margin-bottom:8px">📋 نسخ</button>
-    <label style="display:flex;gap:8px;align-items:center;color:#8696a0;font-size:13px;margin-bottom:12px">
-      <input type="checkbox" id="ack-rec" /> حفظته في مكان آمن
-    </label>
-    <button id="confirm-rec" disabled style="width:100%;padding:12px;border:0;border-radius:10px;background:#00a884;color:#111b21;font-weight:700;cursor:pointer;opacity:.5">متابعة</button>
-  </div>`;
-  document.body.appendChild(modal);
-  $("copy-rec").onclick = () => { navigator.clipboard.writeText(code); $("copy-rec").textContent = "✅ تم النسخ"; setTimeout(() => $("copy-rec").textContent = "📋 نسخ", 1500); };
-  $("ack-rec").onchange = (e) => { $("confirm-rec").disabled = !e.target.checked; $("confirm-rec").style.opacity = e.target.checked ? "1" : ".5"; };
-  $("confirm-rec").onclick = () => modal.remove();
+  return new Promise((resolve) => {
+    const modal = document.createElement("section");
+    modal.className = "modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.innerHTML = `<div class="modal-card">
+      <h3>${t("recoveryTitle")}</h3>
+      <p class="recovery-hint">${t("recoveryHint")}</p>
+      <div class="recovery-code">${code}</div>
+      <button id="copy-rec" class="icon recovery-copy">${t("copy")}</button>
+      <label class="recovery-ack">
+        <input type="checkbox" id="ack-rec" /> ${t("ackSaved")}
+      </label>
+      <button id="confirm-rec" class="btn-primary" disabled style="opacity:.5">${t("continue")}</button>
+    </div>`;
+    document.body.appendChild(modal);
+    const confirmBtn = modal.querySelector("#confirm-rec");
+    modal.querySelector("#copy-rec").onclick = () => { navigator.clipboard.writeText(code); modal.querySelector("#copy-rec").textContent = t("copied"); setTimeout(() => modal.querySelector("#copy-rec").textContent = t("copy"), 1500); };
+    modal.querySelector("#ack-rec").onchange = (e) => { confirmBtn.disabled = !e.target.checked; confirmBtn.style.opacity = e.target.checked ? "1" : ".5"; };
+    confirmBtn.onclick = () => { modal.remove(); resolve(); };
+  });
 }
 
 async function promptRestore() {
-  const code = prompt("أدخل رمز الاستعادة (أو اتركه فارغًا للبدء بدون ماضٍ):");
+  const code = await textPrompt({
+    title: t("restoreTitle"),
+    hint: t("restoreHint"),
+    confirmLabel: t("restoreBtn"),
+  });
   if (!code) {
     const kp = await RasanCrypto.genKeypair();
     state.myKeys = kp;
@@ -116,9 +212,9 @@ async function promptRestore() {
     const parsed = JSON.parse(recovered);
     state.myKeys = parsed;
     await idbPut("myKeypair", parsed);
-    alert("✅ تم استعادة المفاتيح");
+    showToast(t("restoreSuccess"), "success");
   } catch (e) {
-    alert("فشل الاستعادة: " + e.message);
+    showToast(t("restoreFailed") + e.message, "error");
   }
 }
 
@@ -228,8 +324,13 @@ function renderList() {
     el.dataset.cid = c.id;
     const icon = c.type === "channel" ? "📢" : c.type === "group" ? "👥" : "💬";
     const unread = c._unread ? `<span class="badge">${c._unread}</span>` : "";
-    el.innerHTML = `<div class="conv-icon">${icon}</div><div class="conv-body"><b>${escapeHtml(c.name || "DM #" + c.id)}</b><small>${c.members} ${I18N[state.locale].members || "members"}</small></div>${unread}`;
+    const name = c.name || `DM #${c.id}`;
+    el.innerHTML = `<div class="conv-icon">${icon}</div><div class="conv-body"><b>${escapeHtml(name)}</b><small>${c.members} ${I18N[state.locale].members || "members"}</small></div>${unread}`;
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-label", name);
     el.addEventListener("click", () => openConversation(c));
+    el.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openConversation(c); } });
     list.appendChild(el);
   }
 }
@@ -251,7 +352,14 @@ async function openConversation(conv) {
   if (conv.type === "dm") {
     const { members } = await api(`/api/conversations/${conv.id}/members`);
     const peer = members.find(m => m.id !== state.user.id);
-    if (peer) { conv._peer = peer; if (peer.public_key) state.activeKey = await RasanCrypto.deriveShared(state.myKeys.privateKey, peer.public_key); }
+    if (peer) {
+      conv._peer = peer;
+      if (peer.public_key) {
+        state.activeKey = await RasanCrypto.deriveShared(state.myKeys.privateKey, peer.public_key);
+        // Bridge to the security/identity module (TOFU + safety number + QR)
+        window.dispatchEvent(new CustomEvent("rasan:conv-open", { detail: { peerId: String(peer.id), peerPublicKey: peer.public_key, myPublicKey: state.myKeys?.publicKey || null } }));
+      }
+    }
   } else {
     await ensureGroupKey(conv);
     try { const s = await api(`/api/conversations/${conv.id}/key-state`); state.activeKeyVersion = s.current; } catch {}
@@ -291,13 +399,16 @@ function appendMessage(m) {
 
   const b = document.createElement("b"); b.textContent = m.senderName;
   const span = document.createElement("span"); span.className = "text"; span.textContent = m.text;
-  const edited = document.createElement("em"); edited.className = "edited"; edited.style.cssText = "font-size:10px;color:#a7c0b3;font-style:italic;margin-left:4px"; edited.textContent = m.edited_at ? "(معدّلة)" : "";
+  const edited = document.createElement("em"); edited.className = "edited"; edited.textContent = m.edited_at ? t("edited") : "";
   const small = document.createElement("small"); small.textContent = new Date(m.time).toLocaleTimeString(state.locale, { hour: "2-digit", minute: "2-digit" });
 
   div.append(b, span, edited, small);
 
   if (m.senderId === state.user.id && m.type !== "file") {
+    div.tabIndex = 0;
+    div.setAttribute("aria-label", t("msgActionsHint"));
     div.addEventListener("contextmenu", (e) => { e.preventDefault(); showMsgMenu(m, div); });
+    div.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showMsgMenu(m, div); } });
     let t = null;
     div.addEventListener("touchstart", () => { t = setTimeout(() => showMsgMenu(m, div), 600); });
     div.addEventListener("touchend", () => clearTimeout(t));
@@ -313,23 +424,24 @@ function showMsgMenu(m, msgEl) {
   const menu = document.createElement("div");
   menu.className = "msg-menu";
   menu.dataset.msgMenu = "1";
-  menu.style.cssText = "position:fixed;background:#202c33;border-radius:8px;padding:6px;box-shadow:0 4px 20px rgba(0,0,0,.6);z-index:200;display:flex;flex-direction:column;gap:2px";
+  menu.setAttribute("role", "menu");
 
   const edit = document.createElement("button");
-  edit.textContent = "✏ تعديل";
-  edit.style.cssText = "padding:8px 16px;border:0;background:transparent;color:#e9edef;text-align:right;cursor:pointer;border-radius:6px;font-family:inherit";
+  edit.className = "msg-menu-item";
+  edit.textContent = "✏ " + t("editMsg");
   edit.onclick = () => { closeMsgMenu(); editMessage(m); };
 
   const del = document.createElement("button");
-  del.textContent = "🗑 حذف للجميع";
-  del.style.cssText = "padding:8px 16px;border:0;background:transparent;color:#f15c6d;text-align:right;cursor:pointer;border-radius:6px;font-family:inherit";
-  del.onclick = () => { closeMsgMenu(); if (confirm("حذف الرسالة للجميع؟")) state.socket.emit("message:delete", { messageId: m.id }); };
+  del.className = "msg-menu-item msg-menu-danger";
+  del.textContent = "🗑 " + t("deleteMsg");
+  del.onclick = () => { closeMsgMenu(); if (confirm(t("deleteMsgConfirm"))) state.socket.emit("message:delete", { messageId: m.id }); };
 
   menu.append(edit, del);
   const rect = msgEl.getBoundingClientRect();
-  menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 100) + "px";
-  menu.style.right = "16px";
+  menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 120) + "px";
+  menu.style.insetInlineStart = "16px";
   document.body.appendChild(menu);
+  edit.focus();
   setTimeout(() => document.addEventListener("click", closeMsgMenu, { once: true }), 0);
 }
 
@@ -337,9 +449,9 @@ function closeMsgMenu() { document.querySelectorAll("[data-msg-menu]").forEach(e
 
 async function editMessage(m) {
   const current = document.querySelector(`[data-mid="${m.id}"] .text`)?.textContent || "";
-  const newText = prompt("عدّل الرسالة:", current);
+  const newText = await textPrompt({ title: t("editMsg"), initial: current });
   if (newText === null || newText === current || !newText.trim()) return;
-  if (newText.length > 2000) return alert("الحد الأقصى 2000 حرف");
+  if (newText.length > 2000) return showToast(t("maxChars"), "error");
   if (!state.activeKey) return;
   const { ciphertext, iv } = await RasanCrypto.encrypt(state.activeKey, newText.trim());
   state.socket.emit("message:edit", { messageId: m.id, ciphertext, iv });
@@ -369,8 +481,8 @@ $("file-input").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   $("file-input").value = "";
-  if (!state.activeKey) return alert("المفتاح غير جاهز");
-  if (file.size > 30 * 1024 * 1024) return alert("الحد الأقصى 30 ميغابايت");
+  if (!state.activeKey) return showToast(t("keyNotReady"), "error");
+  if (file.size > 30 * 1024 * 1024) return showToast(t("maxFileSize"), "error");
 
   try {
     $("upload-status").classList.remove("hidden");
@@ -406,43 +518,54 @@ $("file-input").addEventListener("change", async (e) => {
     setTimeout(() => $("upload-status").classList.add("hidden"), 400);
   } catch (err) {
     console.error(err);
-    alert("فشل الرفع: " + err.message);
+    showToast(t("uploadFailed") + err.message, "error");
     $("upload-status").classList.add("hidden");
   }
 });
 
 // ===== New DM =====
-async function createDM(username) {
+async function createDM(username, errEl) {
   try {
     const { user: peer } = await api(`/api/auth/users/${encodeURIComponent(username.trim())}`);
-    if (!peer.public_key) throw new Error("الطرف الآخر لا يملك مفتاحًا عامًا");
+    if (!peer.public_key) throw new Error(t("noPeerKey"));
     const { id } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ type: "dm", members: [username.trim()] }) });
     state.activeKey = await RasanCrypto.deriveShared(state.myKeys.privateKey, peer.public_key);
     await loadConversations();
     const conv = state.convs.find(c => c.id === id);
-    if (conv) { conv._peer = peer; openConversation(conv); }
-  } catch (err) { alert(err.message); }
+    if (conv) { conv._peer = peer; closeModal("dm-modal"); openConversation(conv); }
+  } catch (err) {
+    if (errEl) errEl.textContent = translateErr(err.message);
+    else showToast(translateErr(err.message), "error");
+  }
 }
 
-// ===== New Group =====
-$("new-chat").addEventListener("click", () => {
-  const choice = prompt("1) محادثة خاصة  2) مجموعة/قناة");
-  if (choice === "1") { const username = prompt("اسم المستخدم:"); if (username) createDM(username); }
-  else if (choice === "2") { $("group-modal").classList.remove("hidden"); }
+// ===== New chat: choice menu (replaces window.prompt) =====
+$("new-chat").addEventListener("click", () => openModal("new-chat-modal"));
+$("new-group").addEventListener("click", () => openModal("group-modal"));
+$("choice-dm").addEventListener("click", () => { closeModal("new-chat-modal"); $("dm-username").value = ""; $("dm-err").textContent = ""; openModal("dm-modal"); });
+$("choice-group").addEventListener("click", () => { closeModal("new-chat-modal"); $("group-err").textContent = ""; openModal("group-modal"); });
+$("close-new-chat").addEventListener("click", () => closeModal("new-chat-modal"));
+$("close-dm").addEventListener("click", () => closeModal("dm-modal"));
+$("create-dm").addEventListener("click", () => {
+  const username = $("dm-username").value.trim();
+  if (!username) { $("dm-err").textContent = t("dmRequired"); return; }
+  createDM(username, $("dm-err"));
 });
 
-$("close-group").addEventListener("click", () => $("group-modal").classList.add("hidden"));
+$("close-group").addEventListener("click", () => closeModal("group-modal"));
 $("create-group").addEventListener("click", async () => {
   const name = $("group-name").value.trim();
   const desc = $("group-desc").value.trim();
   const members = $("group-members").value.split(",").map(s => s.trim()).filter(Boolean);
   const type = $("group-type").value;
-  if (!name) return;
+  if (!name) { $("group-err").textContent = t("groupNameRequired"); return; }
+  $("group-err").textContent = "";
   try {
     const { id } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ type, name, description: desc, members: [] }) });
     const added = [];
+    const failed = [];
     for (const uname of members) {
-      try { const r = await api(`/api/conversations/${id}/members`, { method: "POST", body: JSON.stringify({ username: uname }) }); added.push(r.member); } catch (e) { console.warn(`add ${uname} failed:`, e.message); }
+      try { const r = await api(`/api/conversations/${id}/members`, { method: "POST", body: JSON.stringify({ username: uname }) }); added.push(r.member); } catch { failed.push(uname); }
     }
     const groupKey = await RasanCrypto.generateGroupKey();
     const entries = [];
@@ -455,10 +578,11 @@ $("create-group").addEventListener("click", async () => {
     }
     await api(`/api/conversations/${id}/group-key/bulk`, { method: "POST", body: JSON.stringify({ entries, key_version: 1 }) });
     await loadConversations();
-    $("group-modal").classList.add("hidden");
+    closeModal("group-modal");
     const conv = state.convs.find(c => c.id === id);
     if (conv) { state.activeKey = groupKey; state.activeKeyVersion = 1; openConversation(conv); }
-  } catch (err) { alert("فشل إنشاء المجموعة: " + err.message); }
+    if (failed.length) showToast(t("membersNotFound") + " " + failed.join(", "), "error");
+  } catch (err) { $("group-err").textContent = translateErr(err.message); }
 });
 
 // ===== Key rotation =====
@@ -485,6 +609,7 @@ $("back").addEventListener("click", () => {
   state.activeConv = null; state.activeKey = null;
   $("chat").classList.add("hidden"); $("list").classList.remove("hidden");
   $("back").classList.add("hidden"); $("title").textContent = "رسن";
+  window.dispatchEvent(new CustomEvent("rasan:conv-close"));
 });
 
 $("logout").addEventListener("click", () => { localStorage.removeItem("rasan_token"); location.reload(); });
@@ -492,13 +617,13 @@ $("logout").addEventListener("click", () => { localStorage.removeItem("rasan_tok
 // ===== Rotate key button =====
 $("rotate-key").addEventListener("click", async () => {
   if (!state.activeConv || state.activeConv.type === "dm") return;
-  if (!confirm("تدوير المفتاح؟ الأعضاء الحاليون سيكملون بدون انقطاع.")) return;
-  try { const v = await rotateGroupKey(state.activeConv); alert(`تم التدوير → الإصدار ${v}`); } catch (e) { alert("فشل: " + e.message); }
+  if (!confirm(t("rotateConfirm"))) return;
+  try { const v = await rotateGroupKey(state.activeConv); showToast(t("rotatedTo") + " " + v, "success"); } catch (e) { showToast(translateErr(e.message), "error"); }
 });
 
 // ===== Stories =====
-$("stories-btn").addEventListener("click", async () => { $("stories").classList.remove("hidden"); await loadStories(); });
-$("close-stories").addEventListener("click", () => $("stories").classList.add("hidden"));
+$("stories-btn").addEventListener("click", async () => { openModal("stories"); await loadStories(); });
+$("close-stories").addEventListener("click", () => closeModal("stories"));
 async function loadStories() {
   const { stories } = await api("/api/stories");
   const list = $("stories-list");
