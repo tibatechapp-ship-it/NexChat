@@ -8,6 +8,7 @@ const { db, DATA_DIR, UPLOAD_DIR } = require("./db");
 const { router: authRouter, verifyToken, authRequired } = require("./auth");
 const security = require("./security");
 const push = require("./push");
+const notifications = require("./notifications");
 
 const app = express();
 const server = http.createServer(app);
@@ -24,6 +25,7 @@ app.use("/api/auth/register", security.authLimiter);
 app.use("/api/", security.apiLimiter);
 app.use("/api/attachments", security.uploadLimiter);
 app.use("/api/auth", authRouter);
+app.use("/api", notifications.createRouter({ authRequired }));
 
 const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 } });
 
@@ -130,11 +132,8 @@ io.on("connection", (socket) => {
     }
     for (const mm of members) {
       if (onlineIds.has(mm.user_id)) continue;
-      push.sendToUser(mm.user_id, {
-        title: socket.user.username,
-        body: msg.type === "file" ? "📎 أرسل مرفقًا" : "أرسل رسالة جديدة",
-        data: { conversationId: String(conversationId), messageId: String(msg.id) },
-      });
+      if (!notifications.canPush(mm.user_id, "new_message")) continue; // تفضيلات المستخدم (تشغيل/إيقاف)
+      push.sendToUser(mm.user_id, notifications.buildNotificationPayload("new_message", { conversationId, messageId: msg.id }));
     }
 
     if (ephemeral_ttl > 0) {
@@ -237,6 +236,8 @@ app.post("/api/conversations/:id/members", authRequired, (req, res) => {
   if (exists) return res.status(409).json({ error: "already a member" });
   db.prepare("INSERT INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)").run(req.params.id, target.id, Date.now());
   io.to("conv:" + req.params.id).emit("member:added", { userId: target.id, username: target.username });
+  // إشعار الدعوة للمجموعة — قالب ثابت بلا أي محتوى (E2EE)
+  notifications.notifyUser(target.id, "group_invite", { conversationId: Number(req.params.id) });
   res.json({ ok: true, member: { id: target.id, username: target.username, public_key: target.public_key } });
 });
 
