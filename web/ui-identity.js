@@ -142,3 +142,27 @@ export function wireButtons() {
   $('btn-close-verify')?.addEventListener('click', closeVerifyModal);
   $('btn-confirm-verified')?.addEventListener('click', confirmVerified);
 }
+
+// Bridge between the classic app.js and this ES module (UX audit: wire the dead identity UI).
+function initIdentityBridge() {
+  wireButtons();
+  window.addEventListener('rasan:conv-open', async (e) => {
+    const { peerId, peerPublicKey, myPublicKey } = e.detail || {};
+    if (!peerId || !peerPublicKey) return;
+    try {
+      await onConversationOpen(peerId, peerPublicKey, myPublicKey);
+    } catch (err) {
+      console.error('identity check failed:', err);
+    }
+  });
+  window.addEventListener('rasan:conv-close', () => {
+    const banner = $('security-banner');
+    if (banner) { banner.className = 'security-banner hidden'; banner.innerHTML = ''; }
+    const input = $('msg-input');
+    const sendBtn = $('send-btn');
+    if (input) input.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+  });
+}
+
+initIdentityBridge();

@@ -1,6 +1,16 @@
 window.I18N = {
-  ar: { tagline:"خيطٌ يربط، لا يقطع", login:"دخول", register:"حساب جديد", stories:"ستوريات (24 ساعة)", post:"نشر", close:"إغلاق", send:"إرسال", newChat:"محادثة جديدة", newGroup:"مجموعة جديدة", create:"إنشاء", noMessages:"لا رسائل بعد. ابدأ المحادثة!", typing:"يكتب...", joined:"انضم", left:"غادر", attach:"إرفاق", logout:"خروج" },
-  en: { tagline:"A thread that binds, not breaks", login:"Login", register:"Sign up", stories:"Stories (24h)", post:"Post", close:"Close", send:"Send", newChat:"New chat", newGroup:"New group", create:"Create", noMessages:"No messages yet. Say hi!", typing:"typing...", joined:"joined", left:"left", attach:"Attach", logout:"Logout" },
+  ar: { tagline:"خيطٌ يربط، لا يقطع", login:"دخول", register:"حساب جديد", stories:"ستوريات (24 ساعة)", post:"نشر", close:"إغلاق", send:"إرسال", newChat:"محادثة جديدة", newGroup:"مجموعة جديدة", create:"إنشاء", noMessages:"لا رسائل بعد. ابدأ المحادثة!", typing:"يكتب...", joined:"انضم", left:"غادر", attach:"إرفاق", logout:"خروج",
+    usernamePh:"اسم المستخدم", passwordPh:"كلمة المرور", messagePh:"اكتب رسالة...", storyPh:"نص الستوري...", groupNamePh:"اسم المجموعة", groupDescPh:"وصف (اختياري)", groupTypeLabel:"النوع", groupMembersPh:"أسماء المستخدمين (مفصولة بفواصل)",
+    newDM:"محادثة خاصة", dmUsername:"اسم المستخدم للطرف الآخر", groupNameRequired:"اكتب اسم المجموعة أولًا", dmRequired:"اكتب اسم المستخدم", membersNotFound:"تعذّر إضافة:", edited:"(معدّلة)", deleteMsg:"حذف للجميع", deleteMsgConfirm:"حذف الرسالة للجميع؟", editMsg:"تعديل", msgActionsHint:"رسالتك — اضغط Enter لقائمة التعديل", maxChars:"الحد الأقصى 2000 حرف", save:"حفظ", cancel:"إلغاء", pleaseWait:"جارٍ المعالجة...",
+    restoreTitle:"استعادة المفاتيح", restoreHint:"أدخل رمز الاستعادة (أو أكمل فارغًا للبدء بدون ماضٍ)", restoreBtn:"استعادة", restoreSuccess:"✅ تم استعادة المفاتيح", restoreFailed:"فشل الاستعادة: ", recoveryTitle:"🔑 احفظ رمز الاستعادة", recoveryHint:"هذا الرمز هو الطريقة الوحيدة لاستعادة رسائلك. اكتبه في مكان آمن.", copied:"✅ تم النسخ", copy:"📋 نسخ", ackSaved:"حفظته في مكان آمن", continue:"متابعة",
+    rotateConfirm:"تدوير المفتاح؟ الأعضاء الحاليون سيكملون بدون انقطاع.", rotatedTo:"تم التدوير ← الإصدار", keyNotReady:"المفتاح غير جاهز بعد", maxFileSize:"الحد الأقصى 30 ميغابايت", uploadFailed:"فشل الرفع: ", noPeerKey:"الطرف الآخر لا يملك مفتاحًا عامًا",
+    errors:{ "bad username":"اسم المستخدم غير صالح (3–24 محرفًا: حروف إنجليزية/أرقام/_)", "bad password":"كلمة المرور قصيرة (6 محارف فأكثر)", "username taken":"الاسم محجوز مسبقًا — جرّب اسمًا آخر", "wrong credentials":"اسم المستخدم أو كلمة المرور غير صحيحة", "too many attempts":"محاولات كثيرة — انتظر قليلًا ثم أعد المحاولة", "invalid payload":"البيانات غير مكتملة", "public key required":"تعذر توليد المفاتيح — أعد المحاولة", "unauthorized":"الجلسة منتهية — أعد تسجيل الدخول", "Failed to fetch":"تعذر الاتصال بالخادم — تحقق من الشبكة" } },
+  en: { tagline:"A thread that binds, not breaks", login:"Login", register:"Sign up", stories:"Stories (24h)", post:"Post", close:"Close", send:"Send", newChat:"New chat", newGroup:"New group", create:"Create", noMessages:"No messages yet. Say hi!", typing:"typing...", joined:"joined", left:"left", attach:"Attach", logout:"Logout",
+    usernamePh:"Username", passwordPh:"Password", messagePh:"Type a message...", storyPh:"Story text...", groupNamePh:"Group name", groupDescPh:"Description (optional)", groupTypeLabel:"Type", groupMembersPh:"Usernames (comma-separated)",
+    newDM:"Direct message", dmUsername:"Peer's username", groupNameRequired:"Enter a group name first", dmRequired:"Enter a username", membersNotFound:"Could not add:", edited:"(edited)", deleteMsg:"Delete for everyone", deleteMsgConfirm:"Delete this message for everyone?", editMsg:"Edit", msgActionsHint:"Your message — press Enter for actions", maxChars:"Maximum 2000 characters", save:"Save", cancel:"Cancel", pleaseWait:"Working...",
+    restoreTitle:"Restore keys", restoreHint:"Enter your recovery code (or leave empty to start fresh)", restoreBtn:"Restore", restoreSuccess:"✅ Keys restored", restoreFailed:"Restore failed: ", recoveryTitle:"🔑 Save your recovery code", recoveryHint:"This code is the only way to restore your messages. Store it safely.", copied:"✅ Copied", copy:"📋 Copy", ackSaved:"I saved it somewhere safe", continue:"Continue",
+    rotateConfirm:"Rotate the key? Current members continue seamlessly.", rotatedTo:"Rotated → version", keyNotReady:"Key not ready yet", maxFileSize:"Maximum 30 MB", uploadFailed:"Upload failed: ", noPeerKey:"The other party has no public key",
+    errors:{ "bad username":"Invalid username (3–24 chars: a-z/0-9/_)", "bad password":"Password too short (min 6 chars)", "username taken":"Username already taken", "wrong credentials":"Wrong username or password", "too many attempts":"Too many attempts — wait a moment and retry", "invalid payload":"Incomplete data", "public key required":"Key generation failed — try again", "unauthorized":"Session expired — sign in again", "Failed to fetch":"Cannot reach the server — check your connection" } },
   fr: { tagline:"Un fil qui lie, pas qui rompt", login:"Connexion", register:"S'inscrire", stories:"Stories (24h)", post:"Publier", close:"Fermer", send:"Envoyer", newChat:"Nouveau chat", newGroup:"Nouveau groupe", create:"Créer", noMessages:"Pas encore de messages.", typing:"écrit...", joined:"a rejoint", left:"a quitté", attach:"Joindre", logout:"Déconnexion" },
   es: { tagline:"Un hilo que une, no rompe", login:"Entrar", register:"Registrarse", stories:"Stories (24h)", post:"Publicar", close:"Cerrar", send:"Enviar", newChat:"Nuevo chat", newGroup:"Nuevo grupo", create:"Crear", noMessages:"Sin mensajes aún.", typing:"escribiendo...", joined:"se unió", left:"salió", attach:"Adjuntar", logout:"Salir" },
   tr: { tagline:"Bağlayan bir ip, kırmayan", login:"Giriş", register:"Kayıt ol", stories:"Hikayeler (24s)", post:"Paylaş", close:"Kapat", send:"Gönder", newChat:"Yeni sohbet", newGroup:"Yeni grup", create:"Oluştur", noMessages:"Henüz mesaj yok.", typing:"yazıyor...", joined:"katıldı", left:"ayrıldı", attach:"Ekle", logout:"Çıkış" },
@@ -16,13 +26,14 @@ window.applyI18n = function (locale) {
   const dict = window.I18N[locale] || window.I18N.ar;
   document.documentElement.lang = locale;
   document.documentElement.dir = (locale === "ar") ? "rtl" : "ltr";
+  const pick = (key) => dict[key] ?? window.I18N.en[key] ?? window.I18N.ar[key];
   document.querySelectorAll("[data-i18n]").forEach((el) => {
-    const key = el.dataset.i18n;
-    if (dict[key]) el.textContent = dict[key];
+    const val = pick(el.dataset.i18n);
+    if (val) el.textContent = val;
   });
   // update placeholders for inputs with data-i18n-placeholder
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
-    const key = el.dataset.i18nPlaceholder;
-    if (dict[key]) el.placeholder = dict[key];
+    const val = pick(el.dataset.i18nPlaceholder);
+    if (val) el.placeholder = val;
   });
 };
