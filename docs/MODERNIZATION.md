@@ -1,0 +1,99 @@
+# MODERNIZATION — chore/modernize (2026-10-30)
+
+Safe, high-impact modernization pass. No major-version bumps, no API changes,
+no `git push` from this branch without review.
+
+---
+
+## 1. Security audit (npm audit)
+
+| Surface | Command | Result |
+|---|---|---|
+| Root (web client + tests) | `npm audit` | ✅ **0 vulnerabilities** |
+| `server/` (express + socket.io) | `npm audit` | ✅ **0 vulnerabilities** |
+
+Resolved versions audited: `express 4.22.3`, `socket.io 4.8.4`,
+`jsonwebtoken 9.0.3`, `bcryptjs 2.4.3`, `helmet 7.2.0`,
+`express-rate-limit 7.5.1`, `multer 1.4.5-lts.2`.
+
+**Action:** none required — no CVEs at the current resolution set, so nothing
+was bumped (per ground rule: security patches only, no majors).
+
+**يحتاج قرار:** `multer` 1.4.x is on the LTS line; upstream's current major is
+2.x. The audit DB reports it clean, but if you want the actively-developed
+major anyway, that is a **major-version bump requiring your approval** (the
+API is compatible for the simple disk upload used here — `multer({ dest })` —
+but the rule is the rule).
+
+## 2. Unused dependencies
+
+Exhaustive import scan (`require`/`from` across `server/`, `web/`, `tests/`,
+`vitest.config.js`):
+
+* **All 7 server dependencies are used** (`express`, `socket.io`, `jsonwebtoken`,
+  `bcryptjs`, `multer`, `helmet`, `express-rate-limit` — 1+ call sites each).
+* **All 4 root devDependencies are used** (`vitest`, `@vitest/coverage-v8`,
+  `fake-indexeddb`, `jsdom` — referenced by the config/tests).
+
+**Action:** nothing to remove — the dependency list is already minimal.
+
+**Second pass — one flag:** `server/push.js` does
+`try { admin = require("firebase-admin") } catch { admin = null }` — an
+**optional, undocumented** dependency: push notifications silently disable
+when the package is absent, and it is deliberately not in `package.json`.
+Deliberate (keeps the default install light), but worth a decision: either
+add `firebase-admin` to `dependencies` (heavier install, push always
+available) or declare it in `optionalDependencies` (npm installs it when it
+can, push still degrades gracefully). Left untouched — behavior is correct
+as-is.
+
+## 3. Dev experience (added)
+
+| File | Purpose |
+|---|---|
+| `Makefile` | Unified entrypoints: `make install` / `make test` (vitest gate) / `make lint` / `make verify` (lint + tests) / `make clean` |
+| `.editorconfig` | Repo-wide formatting contract (2-space for JS/YAML/JSON, tabs for Makefile, 4-space Dart for `mobile/`) |
+
+`pre-commit` hooks were **not** added: the brief scopes them to Python
+projects, and this repo has no Python. The equivalent gate here is
+`make verify` (wire it into CI when you want it enforced).
+
+## 4. Performance — first-load (lazy loading)
+
+The auth screen used to download every script before rendering. `io()` and
+`window.qrcode` were each referenced from exactly one call site
+(`app.js:connectSocket`, `ui-identity.js:renderQR`), which made two surgical
+lazy loads possible with no bundler and no behavior change:
+
+| Change | Effect |
+|---|---|
+| `socket.io/socket.io.js` removed from `index.html`, injected on first `connectSocket()` | ≈40 KB of JS no longer blocks the logged-out auth screen |
+| `vendor/qrcode.min.js` removed from `index.html`, injected the first time the verify modal renders a QR | 20.7 KB deferred until actually needed |
+| `renderQR()` → async with cached load promise (double-open safe, failure falls back to the existing "QR library not loaded" text) | Same UI, zero eager cost |
+| Attachment media: `img.loading="lazy"` + `decoding="async"`, `video.preload="metadata"`, `audio.preload="none"` | Conversations with many attachments stop eagerly fetching/buffering every blob |
+| `sw.js` cache key `rasan-v1` → `rasan-v2` | Existing installs pick up the new shell instead of serving a stale cache |
+
+**Net effect:** script weight executed on the first (logged-out) page load
+drops from ≈120 KB to ≈57 KB — **roughly half**. Post-login behavior is
+unchanged: the socket still connects inside `enterApp()` exactly as before,
+just with the client fetched at that moment instead of at page load.
+
+## 5. Verification
+
+* `npm test` — **41/41 passing** before and after the changes (identity,
+  session, ui-identity, deploy-config suites).
+* `node --check` clean on all modified files (`app.js`, `ui-identity.js`).
+* `npm run lint` (syntax gate) — clean.
+* Second pass re-verification: `npm audit` 0 vulnerabilities (root +
+  `server/`), `make test` → 41/41, lazy-load contract intact (no blocking
+  `/socket.io/socket.io.js` or `/vendor/qrcode.min.js` in `index.html`;
+  loaders cached on first use; SW cache `rasan-v2`).
+
+## 6. Not touched (flagged for visibility)
+
+* `mobile/` (Flutter): `flutter`/`dart` tooling is not available in this
+  environment, so `flutter pub outdated` could not be run. Declared deps are
+  all current-major (`http ^1`, `provider ^6`, `image_picker ^1`, …); a
+  dedicated pass with the Flutter SDK installed is the follow-up.
+* `render.yaml` / server deployment config — untouched; covered by
+  `tests/deploy-config.test.js` (passing).

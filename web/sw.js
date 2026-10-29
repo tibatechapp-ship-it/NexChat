@@ -1,9 +1,12 @@
 // Rasan service worker — network-first for app shell, never cache API/socket.
 // (UX audit: cache-first for everything caused stale assets + unbounded cache growth)
+// /vendor/qrcode.min.js is deliberately NOT precached: it is lazy-loaded on
+// first use (perf pass) and the fetch handler caches it at runtime after the
+// first fetch, so offline use still works without paying for it at install.
 const CACHE = "rasan-v2";
 const PRECACHE = [
   "/", "/index.html", "/style.css", "/app.js", "/i18n.js", "/crypto.js",
-  "/identity.js", "/session.js", "/ui-identity.js", "/vendor/qrcode.min.js", "/manifest.json",
+  "/identity.js", "/session.js", "/ui-identity.js", "/manifest.json",
 ];
 
 self.addEventListener("install", (e) => {

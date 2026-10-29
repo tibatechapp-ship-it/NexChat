@@ -139,12 +139,13 @@
   <div class="upload-bar"><div id="upload-progress"></div></div>
   <span id="upload-label">جاري الرفع...</span>
 </div>
-<script src="/socket.io/socket.io.js"></script>
+<!-- socket.io client + vendor/qrcode.min.js are lazy-loaded on first use
+     (see app.js connectSocket / ui-identity.js renderQR) — keeps the auth
+     screen lean: ~60KB less JS before login. -->
 <script src="/i18n.js"></script>
 <script src="/crypto.js"></script>
 <script type="module" src="/identity.js"></script>
 <script src="/session.js"></script>
-<script src="/vendor/qrcode.min.js" defer></script>
 <script type="module" src="/ui-identity.js"></script>
 <script src="/app.js"></script>
   <div id="verify-modal" class="hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="verify-title">
