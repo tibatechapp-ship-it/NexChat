@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const { db } = require("./db");
 
 const router = express.Router();
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is required in production');
 const JWT_SECRET = process.env.JWT_SECRET || "dev-only-change-me";
 const JWT_EXPIRES = "30d";
 
