@@ -10,6 +10,7 @@
 - إيقاف تخزين `/api/` و`/socket.io/` في الـService Worker (مسارات ديناميكية لم يكن يجب كاشها)
 
 ### Added
+- **تطبيق الجوال — الوضع الليلي**: `ThemeMode` قابل للتغيير (فاتح/داكن/حسب النظام) محفوظ في SharedPreferences (`rasan_theme_mode`) مع مبدّل في شاشة الإعدادات الجديدة (`mobile/lib/theme/`, `mobile/lib/screens/`, `mobile/lib/main.dart`)
 - نوافذ حوارية متاحة بدل `prompt()/alert()` (إتاحة كاملة للكيبورد وقارئ الشاشة)
 - حزمة وصولية: aria-live، تنقل محادثات بالكيبورد، أهداف لمس 44px، تباين مطوَّل
 - رموز تصميم CSS (`:root` tokens) ومقياس خط rem (WCAG 1.4.4 — تكبير نص النظام يعمل)
