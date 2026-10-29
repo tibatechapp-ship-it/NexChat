@@ -131,7 +131,21 @@ async function enterApp() {
   await loadConversations();
 }
 
-function connectSocket() {
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("فشل تحميل السكربت: " + src));
+    document.head.appendChild(s);
+  });
+}
+
+async function connectSocket() {
+  // socket.io client is lazy-loaded on first connect (~40KB saved on the
+  // auth screen). `io` is referenced nowhere else, so the injection point
+  // is exactly here.
+  if (!window.io) await loadScript("/socket.io/socket.io.js");
   state.socket = io({ auth: { token: state.token } });
   state.socket.on("message", async (msg) => {
     if (state.activeConv && msg.conversationId === state.activeConv.id) {
@@ -553,11 +567,11 @@ async function loadAndDisplayAttachment(meta, container) {
   const url = URL.createObjectURL(blob);
   container.innerHTML = "";
   if (meta.mime.startsWith("image/")) {
-    const img = document.createElement("img"); img.src = url; img.alt = meta.filename; img.addEventListener("click", () => window.open(url, "_blank")); container.appendChild(img);
+    const img = document.createElement("img"); img.src = url; img.alt = meta.filename; img.loading = "lazy"; img.decoding = "async"; img.addEventListener("click", () => window.open(url, "_blank")); container.appendChild(img);
   } else if (meta.mime.startsWith("video/")) {
-    const v = document.createElement("video"); v.src = url; v.controls = true; container.appendChild(v);
+    const v = document.createElement("video"); v.src = url; v.controls = true; v.preload = "metadata"; container.appendChild(v);
   } else if (meta.mime.startsWith("audio/")) {
-    const a = document.createElement("audio"); a.src = url; a.controls = true; container.appendChild(a);
+    const a = document.createElement("audio"); a.src = url; a.controls = true; a.preload = "none"; container.appendChild(a);
   } else {
     const card = document.createElement("a"); card.className = "file-card"; card.href = url; card.download = meta.filename;
     card.innerHTML = `<span class="icon">📄</span><div class="meta"><b>${escapeHtml(meta.filename)}</b><small>${formatSize(meta.size)} — اضغط للتحميل</small></div>`;

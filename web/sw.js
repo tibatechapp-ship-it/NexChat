@@ -1,4 +1,4 @@
-const CACHE = "rasan-v1";
+const CACHE = "rasan-v2"; // v2: socket.io + qrcode lazy-loaded, media preload hints
 const ASSETS = ["/", "/index.html", "/style.css", "/app.js", "/i18n.js", "/crypto.js", "/manifest.json"];
 self.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));

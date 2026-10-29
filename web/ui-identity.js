@@ -12,6 +12,23 @@ let ctx = { peerId: null, peerPublicB64: null, myPublicB64: null };
 
 function $(id) { return document.getElementById(id); }
 
+// Lazy-load the QR vendor lib (20.7KB) on first use — the verify modal is
+// opened rarely, so it should not sit in the initial page weight.
+let qrLibPromise = null;
+function loadQrLib() {
+  if (typeof window.qrcode === 'function') return Promise.resolve();
+  if (!qrLibPromise) {
+    qrLibPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/vendor/qrcode.min.js';
+      s.onload = () => resolve();
+      s.onerror = () => { qrLibPromise = null; reject(new Error('فشل تحميل مكتبة QR')); };
+      document.head.appendChild(s);
+    });
+  }
+  return qrLibPromise;
+}
+
 function formatGroups(digits) {
   return digits.match(/.{1,5}/g).join(' ');
 }
@@ -81,7 +98,10 @@ export async function openVerifyModal() {
   const el = $('safety-number');
   if (el) el.textContent = formatGroups(digits);
 
-  renderQR();
+  renderQR().catch((e) => {
+    const box = $('qr-container');
+    if (box) box.textContent = e.message;
+  });
 
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden', 'false');
@@ -94,12 +114,14 @@ export function closeVerifyModal() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
-function renderQR() {
+async function renderQR() {
   const container = $('qr-container');
   if (!container) return;
   container.innerHTML = '';
 
-  if (typeof window.qrcode !== 'function') {
+  try {
+    await loadQrLib();
+  } catch (e) {
     container.textContent = 'QR library not loaded';
     return;
   }
