@@ -182,14 +182,21 @@ describe('notifyUser respects preferences and sends sanitized payloads', () => {
 });
 
 describe('REST endpoints (createRouter with injected auth)', () => {
-  it('GET/PUT /api/push/preferences round-trip', async () => {
-    // express اختياري في بيئة الاختبار — إن لم يتوفر نتجاوز هذا القسم
-    let express;
+  // express متاح كـdevDependency (نفس الإصدار ^4 الذي يستخدمه الخادم).
+  // الاستيراد متحول عبر متغير + @vite-ignore حتى لا يحلله vite أثناء
+  // التحويل — إن غاب عن بيئة ما يتراجع القسم بهدوء بدل فشل الملف كاملاً.
+  async function loadExpress() {
+    const name = ['ex', 'press'].join('');
     try {
-      express = (await import('express')).default;
+      return (await import(/* @vite-ignore */ name)).default;
     } catch {
-      return; // بيئة بلا express — النواة مغطاة بالاختبارات أعلاه
+      return null;
     }
+  }
+
+  it('GET/PUT /api/push/preferences round-trip', async () => {
+    const express = await loadExpress();
+    if (!express) return; // بيئة بلا express — النواة مغطاة بالاختبارات أعلاه
     const uid = makeUser();
     const router = notifications.createRouter({
       authRequired: (req, _res, next) => {
@@ -230,12 +237,8 @@ describe('REST endpoints (createRouter with injected auth)', () => {
   });
 
   it('POST /api/push/send: member→member delivers template; non-member is 403; content fields in request are ignored', async () => {
-    let express;
-    try {
-      express = (await import('express')).default;
-    } catch {
-      return;
-    }
+    const express = await loadExpress();
+    if (!express) return;
     const alice = makeUser();
     const bob = makeUser();
     const mallory = makeUser();
