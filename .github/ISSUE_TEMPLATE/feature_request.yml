@@ -1,0 +1,28 @@
+name: "✨ اقتراح ميزة | Feature request"
+description: فكرة لتحسين المشروع
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: المشكلة التي تحلها | Problem it solves
+      description: ما المهمة التي لا يمكن إنجازها بسهولة اليوم؟
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: الحل المقترح | Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: بدائل فكرت بها | Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: نطاق | Scope
+      options:
+        - label: بحثت في الـIssues المفتوحة والمغلقة ولم أجد اقتراحاً مشابهاً
+        - label: أفهم أن التنفيذ يخضع للأولويات وقد يستغرق وقتاً

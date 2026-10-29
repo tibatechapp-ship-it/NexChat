@@ -1,0 +1,42 @@
+name: "🐛 تقرير علة | Bug report"
+description: سلوك غير متوقع أو خطأ
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: ماذا حدث؟ | What happened?
+      description: وصف واضح للسلوك الفعلي مقابل المتوقع
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: خطوات إعادة الإنتاج | Steps to reproduce
+      placeholder: |
+        1. افتح ...
+        2. اضغط ...
+        3. لاحظ ...
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: الأثر | Impact
+      options:
+        - "حاد — يمنع الاستخدام (blocker)"
+        - "متوسط — يوجد بديل (workaround)"
+        - "بسيط — تجميلي أو نصي"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: البيئة | Environment
+      description: نظام التشغيل / المتصفح / الإصدار
+      placeholder: "مثال: Windows 11، Chrome 141، Rasan v0.3.0"
+  - type: textarea
+    id: logs
+    attributes:
+      label: سجلات أو لقطات | Logs or screenshots
+      description: "⚠️ لا تُلصق أبداً مفاتيح أو توكنات أو بيانات شخصية"
