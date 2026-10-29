@@ -8,9 +8,9 @@ let messaging = null;
 let ready = false;
 
 function init() {
-  if (!admin) { console.log("[push] disabled — firebase-admin not installed"); return; }
+  if (!admin) { console.warn("[push] disabled — firebase-admin not installed (expected in production: it is a declared dependency)"); return; }
   const credPath = process.env.FCM_CREDENTIALS || path.join(__dirname, "firebase-service-account.json");
-  if (!fs.existsSync(credPath)) { console.log("[push] disabled — no credentials"); return; }
+  if (!fs.existsSync(credPath)) { console.warn("[push] disabled — no FCM credentials (set FCM_CREDENTIALS or add firebase-service-account.json)"); return; }
   try {
     admin.initializeApp({ credential: admin.credential.cert(require(path.resolve(credPath))) });
     messaging = admin.messaging();
