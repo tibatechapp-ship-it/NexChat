@@ -1,18 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../push/notification_preferences.dart';
 import '../theme/theme_controller.dart';
 
 /// شاشة الإعدادات.
 ///
-/// قسم المظهر: اختيار فاتح/داكن/حسب النظام — التغيير يُطبَّق فوراً
-/// ويُحفظ في SharedPreferences (rasan_theme_mode).
+/// - المظهر: اختيار فاتح/داكن/حسب النظام — يُطبَّق فوراً ويُحفظ في
+///   SharedPreferences (rasan_theme_mode).
+/// - الإشعارات: تشغيل/إيقاف لكل نوع (رسائل جديدة / دعوات مجموعات) —
+///   حفظ محلي فوري + مزامنة مع الخادم (PUT /api/push/preferences).
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeController>();
+    final notifPrefs = context.watch<NotificationPreferences>();
 
     return Scaffold(
       appBar: AppBar(title: const Text('الإعدادات')),
@@ -45,6 +49,28 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          const Divider(height: 32),
+          const _SectionHeader('الإشعارات'),
+          SwitchListTile(
+            secondary: const Icon(Icons.chat_bubble_outline),
+            title: const Text('إشعارات الرسائل الجديدة'),
+            subtitle: const Text(
+              'تنبيه فقط — بدون محتوى الرسالة (ضمانة E2EE)',
+            ),
+            value: notifPrefs.messagesEnabled,
+            onChanged: notifPrefs.loaded
+                ? (v) => context.read<NotificationPreferences>().setMessages(v)
+                : null,
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.group_add_outlined),
+            title: const Text('إشعارات الدعوات إلى المجموعات'),
+            subtitle: const Text('عند إضافتك إلى مجموعة جديدة'),
+            value: notifPrefs.invitesEnabled,
+            onChanged: notifPrefs.loaded
+                ? (v) => context.read<NotificationPreferences>().setInvites(v)
+                : null,
           ),
           const Divider(height: 32),
           const Padding(
