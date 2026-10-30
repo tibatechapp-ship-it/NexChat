@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/auth/auth_service.dart';
 import '../theme/theme_controller.dart';
 import 'settings_screen.dart';
 
@@ -15,6 +16,7 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeController>();
+    final auth = context.watch<AuthController>();
     final colors = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -27,6 +29,11 @@ class HomeScreen extends StatelessWidget {
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SettingsScreen()),
             ),
+          ),
+          IconButton(
+            tooltip: 'تسجيل الخروج',
+            icon: const Icon(Icons.logout_outlined),
+            onPressed: auth.busy ? null : () => _confirmLogout(context),
           ),
         ],
       ),
@@ -43,6 +50,16 @@ class HomeScreen extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 8),
+              if (auth.username != null) ...[
+                Text(
+                  'مرحباً ${auth.username}',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: colors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                const SizedBox(height: 8),
+              ],
               Text(
                 'وضع المظهر الحالي: ${_modeLabel(theme.mode)}',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -62,6 +79,33 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// تأكيد الخروج — يلغي تسجيل توكن الإشعارات لدى الخادم
+  /// (POST /api/push/unregister) ثم يمسح الجلسة (AuthService.logout).
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تسجيل الخروج'),
+        content: const Text(
+          'سيتم إيقاف إشعارات هذا الجهاز ومسح جلسة الدخول. متابعة؟',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('خروج'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      await context.read<AuthController>().logout();
+    }
   }
 
   static String _modeLabel(ThemeMode mode) {
