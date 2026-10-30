@@ -43,3 +43,65 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:latest \
             detect --source="/repo" --no-banner --redact --verbose
+
+  # موديول صلة (sila/) وصل عبر git subtree وله package.json مستقل — بدون هذه
+  # الوظيفة كان كوده يُدمج بلا أي اختبار في الـ CI الجذري.
+  sila:
+    name: sila (node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sila
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: sila/package-lock.json
+
+      - name: Verify the test surface exists
+        run: |
+          test -f package.json || { echo "sila/package.json missing"; exit 1; }
+          node -e "const s=require('./package.json').scripts||{}; if(!s.test){console.error('no test script in sila');process.exit(1)}"
+
+      - name: Install
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # تطبيقا Flutter: mobile (تطبيق رسن) و sila/flutter_app (موديول صلة).
+  flutter:
+    name: flutter (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [mobile, sila/flutter_app]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+
+      # أخطاء الكود تُفشل الخطوة؛ الملاحظات الأسلوبية (info/warning) لا تُفشل.
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Test
+        run: flutter test
