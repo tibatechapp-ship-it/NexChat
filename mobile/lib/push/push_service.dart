@@ -81,7 +81,7 @@ class PushService {
         ),
       );
 
-      final androidPlugin = _local.resolvePlatformSpecificAndroidImplementation<
+      final androidPlugin = _local.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(_channel);
 
@@ -100,7 +100,7 @@ class PushService {
       });
 
       // دوران التوكن: إعادة تسجيل فوري لدى الخادم إن وُجدت جلسة.
-      FirebaseMessaging.onTokenRefresh.listen((t) {
+      FirebaseMessaging.instance.onTokenRefresh.listen((t) {
         _fcmToken = t;
         api.registerToken(t, platformName);
       });

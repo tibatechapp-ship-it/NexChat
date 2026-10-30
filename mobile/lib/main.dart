@@ -3,9 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/auth/auth_service.dart';
 import 'push/notification_preferences.dart';
 import 'push/push_service.dart';
-import 'screens/home_screen.dart';
+import 'screens/auth_gate.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 
@@ -26,10 +27,16 @@ Future<void> main() async {
   // تحميل غير معطِّل — الواجهة تعرض القيم المحلية فوراً وتُحدَّث عند المزامنة.
   unawaited(notificationPreferences.load());
 
+  // الجلسة: استعادة محلية سريعة (JWT من التخزين الآمن) — وعند وجود
+  // جلسة يُعاد ربط توكن FCM بها فوراً (AuthService.restoreSession).
+  final authController = AuthController();
+  await authController.restore();
+
   runApp(
     RasanApp(
       themeController: themeController,
       notificationPreferences: notificationPreferences,
+      authController: authController,
     ),
   );
 }
@@ -39,10 +46,12 @@ class RasanApp extends StatelessWidget {
     super.key,
     required this.themeController,
     required this.notificationPreferences,
+    required this.authController,
   });
 
   final ThemeController themeController;
   final NotificationPreferences notificationPreferences;
+  final AuthController authController;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +61,7 @@ class RasanApp extends StatelessWidget {
         ChangeNotifierProvider<NotificationPreferences>.value(
           value: notificationPreferences,
         ),
+        ChangeNotifierProvider<AuthController>.value(value: authController),
       ],
       child: Consumer<ThemeController>(
         builder: (context, theme, _) => MaterialApp(
@@ -62,7 +72,8 @@ class RasanApp extends StatelessWidget {
           // الوضع الليلي: light/dark/system — محفوظ في SharedPreferences
           // (مفتاح rasan_theme_mode) عبر ThemeController.
           themeMode: theme.mode,
-          home: const HomeScreen(),
+          // بوابة المصادقة: جلسة ⇒ الرئيسية، وإلا شاشة الدخول.
+          home: const AuthGate(),
         ),
       ),
     );
