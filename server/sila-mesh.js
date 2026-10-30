@@ -23,6 +23,10 @@ const MAX_ROOMS_PER_SOCKET = 8;
 const MAX_ROOM_NAME = 32;
 const RATE_WINDOW_MS = 10000;
 const RATE_MAX = 10;
+// سقوف إشارات WebRTC (تقنية Meshenger — P1): SDP/ICE تمر موجّهة فقط،
+// والبيانات نفسها تسير مباشرة بين الجهازين بلا خادم وسيط.
+const MAX_SDP_BYTES = 20000;
+const MAX_ICE_BYTES = 2048;
 
 function validRoomName(name) {
   if (typeof name !== "string") return false;
@@ -113,6 +117,25 @@ function init(io) {
       socket.emit("sila:peers", { room: target, count: nsp.adapter.rooms.get(target)?.size || 0 });
     });
 
+    // --- إشارات WebRTC (LAN-direct — بلا تخزين ولا طوابير) ---
+    // توجيه صارم: للجهاز الهدف فقط، ويجب أن يكون متصلاً الآن على المساحة،
+    // ولا يجوز التوجيه للنفس. أي فشل يُسكت — العميل يعود للنقل عبر الخادم.
+    const relayRtc = (event, { to, payload } = {}, maxBytes) => {
+      if (rateLimited()) {
+        socket.emit("sila:rejected", { reason: "rate_limit" });
+        return;
+      }
+      if (typeof to !== "string" || !to.length || to === socket.id) return;
+      if (typeof payload !== "string" || !payload.length || Buffer.byteLength(payload, "utf8") > maxBytes) return;
+      const target = nsp.sockets.get(to);
+      if (!target) return; // لا طوابير ولا احتفاظ — الجهاز غير موجود الآن
+      target.emit(event, { from: socket.id, payload });
+    };
+
+    socket.on("sila:rtc:offer", (d) => relayRtc("sila:rtc:offer", d, MAX_SDP_BYTES));
+    socket.on("sila:rtc:answer", (d) => relayRtc("sila:rtc:answer", d, MAX_SDP_BYTES));
+    socket.on("sila:rtc:ice", (d) => relayRtc("sila:rtc:ice", d, MAX_ICE_BYTES));
+
     socket.on("disconnect", () => {
       for (const room of socket._silaRooms) {
         nsp.to(room).emit("sila:leave", { from: socket.id, at: Date.now() });
@@ -123,4 +146,4 @@ function init(io) {
   return nsp;
 }
 
-module.exports = { init, validRoomName, sanitizeMessage, MAX_TEXT_BYTES, RATE_MAX };
+module.exports = { init, validRoomName, sanitizeMessage, MAX_TEXT_BYTES, RATE_MAX, MAX_SDP_BYTES, MAX_ICE_BYTES };

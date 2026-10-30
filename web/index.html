@@ -52,6 +52,8 @@
     <button id="back" class="icon hidden" aria-label="رجوع" title="رجوع">←</button>
     <h2 id="title">رسن</h2>
     <div class="actions">
+      <button id="call-btn" class="icon hidden" aria-label="مكالمة صوتية" title="مكالمة صوتية">📞</button>
+      <button id="video-call-btn" class="icon hidden" aria-label="مكالمة مرئية" title="مكالمة مرئية">🎥</button>
       <button id="emergency-btn" class="icon emergency hidden" aria-label="إنذار طوارئ" title="إنذار طوارئ">🚨</button>
       <button id="rotate-key" class="icon hidden" aria-label="تدوير مفتاح المجموعة" title="تدوير مفتاح المجموعة">🔄</button>
       <button id="new-chat" class="icon" aria-label="محادثة جديدة" title="محادثة جديدة">+</button>
@@ -87,6 +89,24 @@
     </form>
   </section>
 </main>
+
+<!-- Call overlay — مكالمة WebRTC: الوسائط P2P مشفّرة DTLS-SRTP، الخادم موجّه إشارات فقط -->
+<section id="call-overlay" class="call-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="call-title">
+  <video id="remote-video" class="call-video hidden" autoplay playsinline></video>
+  <video id="local-video" class="call-local-video hidden" autoplay playsinline muted></video>
+  <div class="call-card">
+    <div class="call-avatar" aria-hidden="true">📞</div>
+    <h3 id="call-title">مكالمة</h3>
+    <p id="call-status" aria-live="polite"></p>
+    <div class="call-controls">
+      <button type="button" id="call-mic" class="icon" aria-label="كتم الميكروفون" title="كتم/إلغاء الكتم">🎙</button>
+      <button type="button" id="call-cam" class="icon hidden" aria-label="تشغيل/إيقاف الكاميرا" title="الكاميرا">🎥</button>
+      <button type="button" id="call-accept" class="icon call-accept hidden" aria-label="قبول المكالمة" title="قبول">✅</button>
+      <button type="button" id="call-reject" class="icon call-danger hidden" aria-label="رفض المكالمة" title="رفض">✕</button>
+      <button type="button" id="call-hangup" class="icon call-danger hidden" aria-label="إنهاء المكالمة" title="إنهاء">⏻</button>
+    </div>
+  </div>
+</section>
 
 <!-- New chat choice modal -->
 <section id="new-chat-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="new-chat-title">

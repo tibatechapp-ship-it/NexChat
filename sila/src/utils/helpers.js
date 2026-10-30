@@ -35,3 +35,11 @@ export function formatTime(date = new Date()) {
 export function generateNodeId() {
   return crypto.randomUUID().slice(0, 8);
 }
+
+/**
+ * معرّف رسالة فريد — يُحمل مع الرسالة عبر كل مسارات النقل (Mesh/P2P/الخادم)
+ * كي يزيل الاستقبال التكرار (النقل المزدوج نمط BitChat).
+ */
+export function newMessageId() {
+  return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}

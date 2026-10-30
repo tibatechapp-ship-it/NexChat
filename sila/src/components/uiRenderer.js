@@ -74,7 +74,7 @@ export function renderMessages() {
           <strong>${escapeHtml(message.author)}</strong>
           <time>${escapeHtml(message.time)}</time>
           <span class="route ${message.transport === "internet" ? "internet" : "mesh"}">
-            ${message.transport === "mesh" ? "Mesh" : "Net"}
+            ${message.transport === "p2p" ? "P2P" : message.transport === "mesh" ? "Mesh" : "Net"}
           </span>
         </div>
         <p>${escapeHtml(message.text)}</p>
@@ -230,6 +230,14 @@ export function renderApp() {
             <div class="peer-list">
               ${renderPeers()}
             </div>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-title">
+              <strong>قنوات مباشرة (P2P)</strong>
+              <span>${Number(state.p2pChannels) || 0}</span>
+            </div>
+            <small class="p2p-hint">WebRTC جهاز-إلى-جهاز على الشبكة المحلية — بلا خادم وسيط للبيانات</small>
           </div>
           
           <div class="detail-section room-rules">

@@ -192,7 +192,77 @@ io.on("connection", (socket) => {
     io.to("conv:" + row.conversation_id).emit("message:edited", { id: messageId, ciphertext, iv, edited_at: now });
   });
 
+  // --- Call signaling (relays only — validation + busy tracking, no storage) ---
+  socket._callWindow = Date.now();
+  socket._callCount = 0;
+  const checkCallRate = () => {
+    const now = Date.now();
+    if (now - socket._callWindow > CALL_RATE_WINDOW_MS) { socket._callWindow = now; socket._callCount = 0; }
+    socket._callCount++;
+    return socket._callCount <= CALL_RATE_MAX;
+  };
+
+  // عرض مكالمة: كلا الطرفين عضوان في نفس المحادثة، ولا أحد منهما في مكالمة
+  socket.on("call:offer", ({ conversationId, toUserId, sdp, video } = {}) => {
+    if (!checkCallRate()) return;
+    const convId = Number(conversationId);
+    if (!Number.isInteger(convId) || !Number.isInteger(toUserId)) return;
+    if (typeof sdp !== "string" || !sdp.length || Buffer.byteLength(sdp, "utf8") > MAX_SDP_BYTES) return;
+    if (!isMemberOf(convId, uid) || !isMemberOf(convId, toUserId)) {
+      socket.emit("call:error", { reason: "forbidden" });
+      return;
+    }
+    if (callBusy.has(uid)) return; // المتصل نفسه في مكالمة
+    if (callBusy.has(toUserId)) { socket.emit("call:busy", {}); return; }
+    const targets = userSockets(toUserId);
+    if (!targets.length) { socket.emit("call:unavailable", {}); return; }
+    callBusy.set(uid, { peer: toUserId, conversationId: convId });
+    callBusy.set(toUserId, { peer: uid, conversationId: convId });
+    for (const target of targets) {
+      target.emit("call:offer", { from: uid, fromName: socket.user.username, conversationId: convId, sdp, video: !!video });
+    }
+  });
+
+  // قبول: مسموح فقط لمن لديه اقتران مكالمة فعلي مع الطرف
+  socket.on("call:answer", ({ toUserId, sdp } = {}) => {
+    if (!checkCallRate()) return;
+    if (typeof sdp !== "string" || !sdp.length || Buffer.byteLength(sdp, "utf8") > MAX_SDP_BYTES) return;
+    const busy = callBusy.get(uid);
+    if (!busy || busy.peer !== toUserId) return;
+    for (const target of userSockets(toUserId)) target.emit("call:answer", { from: uid, sdp });
+  });
+
+  // مرشحات ICE — صغيرة ومتدفقة؛ تتطلب اقتراناً قائماً كذلك
+  socket.on("call:ice", ({ toUserId, candidate } = {}) => {
+    if (!checkCallRate()) return;
+    if (typeof candidate !== "string" || !candidate.length || Buffer.byteLength(candidate, "utf8") > MAX_ICE_BYTES) return;
+    const busy = callBusy.get(uid);
+    if (!busy || busy.peer !== toUserId) return;
+    for (const target of userSockets(toUserId)) target.emit("call:ice", { from: uid, candidate });
+  });
+
+  // إنهاء/رفض — يزيل اقتران الطرفين دائماً (لا حالة يتيمة)
+  socket.on("call:end", ({ toUserId } = {}) => {
+    const busy = callBusy.get(uid);
+    if (!busy || busy.peer !== toUserId) return;
+    clearCallPair(uid, toUserId);
+    for (const target of userSockets(toUserId)) target.emit("call:end", { from: uid, reason: "hangup" });
+  });
+
+  socket.on("call:reject", ({ toUserId } = {}) => {
+    const busy = callBusy.get(uid);
+    if (!busy || busy.peer !== toUserId) return;
+    clearCallPair(uid, toUserId);
+    for (const target of userSockets(toUserId)) target.emit("call:reject", { from: uid });
+  });
+
   socket.on("disconnect", () => {
+    // إن كان المستخدم في مكالمة ولم يبق له أجهزة متصلة — أبلغ الطرف الآخر
+    const busy = callBusy.get(uid);
+    if (busy && userSockets(uid).length === 0) {
+      clearCallPair(uid, busy.peer);
+      for (const target of userSockets(busy.peer)) target.emit("call:end", { from: uid, reason: "disconnect" });
+    }
     presence.get(uid)?.delete(socket.id);
     if (presence.get(uid)?.size === 0) { presence.delete(uid); broadcastPresence(uid, false); }
   });
@@ -361,6 +431,32 @@ app.post("/api/conversations/:id/emergency", authRequired, (req, res) => {
   }
   res.json({ ok: true, at, notified });
 });
+
+// ===== Calls — مكالمات صوت/مرئي (WebRTC — من بحث الميزات P1: نمط Meshenger/Zello) =====
+// الإشارة فقط تمر عبر الخادم (SDP/ICE) — الوسائط نفسها تسير طرف-لطرف مباشرة
+// مشفّرة DTLS-SRTP ولا يرى الخادم صوتاً أو صورة إطلاقاً. بلا تخزين ولا DB:
+// كل حالة اتصال في الذاكرة وتموت بانتهائها.
+// الخطابة بالـ userId (لا socket id) لتدعم تعدد الأجهزة: العرض يصل كل أجهزة
+// الطرف الآخر وأول "قبول" يفوز. الإساءة مقهومة بمحدّد معدل مستقل.
+const MAX_SDP_BYTES = 32768;
+const MAX_ICE_BYTES = 2048;
+const CALL_RATE_WINDOW_MS = 10000;
+const CALL_RATE_MAX = 120;
+const callBusy = new Map(); // userId -> { peer, conversationId } — حالة الخطابة/المكالمة
+
+function isMemberOf(conversationId, userId) {
+  return !!db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(conversationId, userId);
+}
+
+function userSockets(userId) {
+  const out = [];
+  for (const sock of io.sockets.sockets.values()) {
+    if (sock.user && sock.user.id === userId) out.push(sock);
+  }
+  return out;
+}
+
+function clearCallPair(aId, bId) { callBusy.delete(aId); callBusy.delete(bId); }
 
 // ===== Stories =====
 app.post("/api/stories", authRequired, (req, res) => {

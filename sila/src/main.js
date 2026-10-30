@@ -2,7 +2,8 @@ import "./style.css";
 import { state, addMessage, addPeer, setActiveRoom, setRoomCount } from "./state/appState.js";
 import { MeshService } from "./services/meshService.js";
 import { NetBridge } from "./services/netBridge.js";
-import { generateNodeId, formatTime } from "./utils/helpers.js";
+import { RtcService } from "./services/rtcService.js";
+import { generateNodeId, formatTime, newMessageId } from "./utils/helpers.js";
 import { paint } from "./components/uiRenderer.js";
 import { bindEvents, eventHandlers } from "./components/eventHandlers.js";
 
@@ -29,6 +30,21 @@ netBridge.onStateChange((connected) => {
   paint();
 });
 netBridge.connect();
+
+// ===== النقل المباشر جهاز-إلى-جهاز (WebRTC DataChannel — تقنية Meshenger) =====
+// الإشارة عبر مساحة /sila، والبيانات تسير مباشرة بين الجهازين على الشبكة
+// المحلية. يُنشأ بعد connect() لأنه يعتمد على مقبس الجسر، ويفشل بهدوء حيث
+// RTCPeerConnection غير متاح — نقل BroadcastChannel + الخادم يبقى يعمل وحده.
+const rtcService = new RtcService(netBridge);
+rtcService.onMessage((data) => {
+  addPeer(data.from, Date.now());
+  addMessage({ ...data.message, mine: false, transport: "p2p" });
+  paint();
+});
+rtcService.onChannelsChange((open) => {
+  state.p2pChannels = open;
+  paint();
+});
 
 // ===== ساحات صلة الحية =====
 // الغرف الحقيقية عبر الخادم: تبديل الساحة ينضم عبر sila:join، والعدّادات
@@ -74,6 +90,7 @@ eventHandlers.onSendMessage = () => {
 
   const viaServer = netBridge.connected;
   const message = {
+    id: newMessageId(), // مشترك بين المسارات الثلاثة — الاستقبال يزيل التكرار
     author: "أنت",
     initials: "أ",
     time: formatTime(),
@@ -83,8 +100,11 @@ eventHandlers.onSendMessage = () => {
   };
 
   addMessage(message);
-  // إرسال مزدوج المسار: نفس المتصفح (BroadcastChannel) + الأجهزة الأخرى (الخادم)
+  // نقل مزدوج/ثلاثي (نمط BitChat): نفس المتصفح (BroadcastChannel) + القنوات
+  // المباشرة (WebRTC P2P) + الأجهزة الأخرى (الخادم) — والاستقبال يزيل التكرار
+  // عبر message.id. إذا سقط مسار وصلت الرسالة من المسار الآخر.
   meshService.sendMessage(message);
+  rtcService.send(message);
   netBridge.send(message);
   paint();
 

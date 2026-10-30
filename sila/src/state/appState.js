@@ -7,6 +7,7 @@ export const state = {
   activeRoom: "ساحة الحي",
   online: navigator.onLine,
   peers: new Map(),
+  p2pChannels: 0, // قنوات WebRTC المباشرة المفتوحة (شارة P2P)
   messages: [
     {
       author: "ليان",
@@ -51,7 +52,11 @@ export function setActiveRoom(roomName) {
 }
 
 export function addMessage(message) {
+  // إزالة التكرار عبر id مشترك بين مسارات النقل (Mesh/P2P/الخادم):
+  // النقل المزدوج يعني أن الرسالة قد تصل من أكثر من مسار — تُعرض مرة واحدة
+  if (message?.id && state.messages.some((m) => m.id === message.id)) return false;
   state.messages.push(message);
+  return true;
 }
 
 export function addPeer(peerId, timestamp) {

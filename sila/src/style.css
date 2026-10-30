@@ -745,3 +745,6 @@ button {
     max-width: 92%;
   }
 }
+
+/* ===== شارة القنوات المباشرة (WebRTC P2P — تقنية Meshenger) ===== */
+.p2p-hint{color:var(--muted);opacity:.85;font-size:0.72rem;line-height:1.5}

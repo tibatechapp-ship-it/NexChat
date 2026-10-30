@@ -291,7 +291,8 @@ async function connectSocket() {
   if (!window.io) await loadScript("/socket.io/socket.io.js");
   state.socket = io({ auth: { token: state.token } });
   state.socket.on("connect", () => { loadOutbox(); flushOutbox(); });
-  state.socket.on("disconnect", () => { if (state.user) showToast(I18N[state.locale].offlineQueued || "انقطع الاتصال — ستوضع الرسائل في الطابور", "error"); });
+  state.socket.on("disconnect", () => { if (state.user) showToast(I18N[state.locale].offlineQueued || "انقطع الاتصال — ستوضع الرسائل في الطابور", "error"); teardownCall(true); });
+  bindCallEvents();
   // إقرار الخادم: الرسالة حُفظت — مؤشر ✓
   state.socket.on("message:ack", ({ clientId }) => setMsgStatus(clientId, "sent"));
   state.socket.on("message", async (msg) => {
@@ -424,6 +425,9 @@ async function openConversation(conv) {
   $("emergency-banner").classList.add("hidden");
   // زر الطوارئ متاح للمجموعات والقنوات (بث جماعي كما في Zello) — لا للخاص
   $("emergency-btn").classList.toggle("hidden", !(conv.type === "group" || conv.type === "channel"));
+  // زرا المكالمات للخاص فقط (مكالمة 1:1 — WebRTC؛ مكالمات المجموعات في مرحلة لاحقة)
+  $("call-btn").classList.toggle("hidden", conv.type !== "dm");
+  $("video-call-btn").classList.toggle("hidden", conv.type !== "dm");
   state.socket.emit("join", { conversationId: conv.id });
   $("rotate-key").classList.toggle("hidden", conv.type === "dm");
 
@@ -824,6 +828,10 @@ $("back").addEventListener("click", () => {
   state.activeConv = null; state.activeKey = null;
   $("chat").classList.add("hidden"); $("list").classList.remove("hidden");
   $("back").classList.add("hidden"); $("title").textContent = "رسن";
+  // أزرار المحادثة (طوارئ/مكالمة) لا معنى لها خارج محادثة مفتوحة
+  $("call-btn").classList.add("hidden");
+  $("video-call-btn").classList.add("hidden");
+  $("emergency-btn").classList.add("hidden");
   window.dispatchEvent(new CustomEvent("rasan:conv-close"));
 });
 
@@ -915,6 +923,212 @@ function formatSize(bytes) {
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// ===== المكالمات الصوتية/المرئية (WebRTC — من بحث الميزات P1: نمط Meshenger/Zello) =====
+// الوسائط تسير طرف-لطرف مباشرة مشفّرة DTLS-SRTP — الخادم موجّه إشارات فقط
+// (SDP/ICE بحجم محدود ومع اقتران مُتحقّق منه). بلا تخزين ولا سجل.
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const RING_TIMEOUT_MS = 45000;
+let call = null;           // حالة المكالمة الحالية (null = لا مكالمة)
+let callTimer = null;      // مؤقّت عرض المدة
+let ringingTimeout = null; // مهلة الرنين قبل الإلغاء التلقائي
+
+function callSupported() {
+  return typeof RTCPeerConnection !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+}
+
+function teardownCall() {
+  clearTimeout(ringingTimeout); ringingTimeout = null;
+  clearInterval(callTimer); callTimer = null;
+  if (call?.local) { try { call.local.getTracks().forEach((tr) => tr.stop()); } catch {} }
+  if (call?.pc) { try { call.pc.close(); } catch {} }
+  call = null;
+  $("remote-video").srcObject = null;
+  $("local-video").srcObject = null;
+  $("call-overlay").classList.add("hidden");
+  $("call-overlay").classList.remove("has-video");
+  $("call-mic").textContent = "🎙";
+  $("call-cam").textContent = "🎥";
+}
+
+function callShowUI({ title, status, mode }) {
+  // mode: incoming (عرض وارد) | outgoing (يرن) | active (في مكالمة)
+  $("call-title").textContent = title;
+  $("call-status").textContent = status;
+  $("call-overlay").classList.remove("hidden");
+  $("call-accept").classList.toggle("hidden", mode !== "incoming");
+  $("call-reject").classList.toggle("hidden", mode === "outgoing");
+  $("call-hangup").classList.toggle("hidden", mode === "incoming");
+  $("call-mic").classList.toggle("hidden", mode === "incoming");
+  $("call-cam").classList.toggle("hidden", mode === "incoming" || !(call && call.video));
+  const showVideo = mode === "active" && call && call.video;
+  $("remote-video").classList.toggle("hidden", !showVideo);
+  $("local-video").classList.toggle("hidden", !showVideo);
+  $("call-overlay").classList.toggle("has-video", !!showVideo);
+}
+
+function startCallTimer() {
+  if (!call || call.startedAt) return;
+  call.startedAt = Date.now();
+  callTimer = setInterval(() => {
+    if (!call?.startedAt) return;
+    const s = Math.floor((Date.now() - call.startedAt) / 1000);
+    $("call-status").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }, 1000);
+}
+
+function createPC() {
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  call.pc = pc;
+  pc.onicecandidate = (e) => {
+    if (e.candidate && call && state.socket) state.socket.emit("call:ice", { toUserId: call.peerId, candidate: JSON.stringify(e.candidate) });
+  };
+  pc.ontrack = (e) => {
+    if (!call) return;
+    $("remote-video").srcObject = e.streams[0] || new MediaStream([e.track]);
+  };
+  pc.onconnectionstatechange = () => {
+    if (!call || call.pc !== pc) return;
+    if (pc.connectionState === "connected") startCallTimer();
+    if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+      const wasActive = call.startedAt > 0;
+      teardownCall();
+      if (wasActive) showToast(t("callEnded"), "info");
+    }
+  };
+  return pc;
+}
+
+async function flushPendingIce() {
+  if (!call?.pc) return;
+  const list = call.pendingIce.splice(0);
+  for (const c of list) { try { await call.pc.addIceCandidate(JSON.parse(c)); } catch {} }
+}
+
+async function startCall(video) {
+  const conv = state.activeConv;
+  if (!conv || conv.type !== "dm" || !conv._peer) return;
+  if (call) { showToast(t("callBusySelf"), "error"); return; }
+  if (!callSupported()) { showToast(t("callUnsupported"), "error"); return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: video ? { width: 640 } : false });
+  } catch { showToast(t("callPermissionDenied"), "error"); return; }
+  call = { role: "caller", peerId: conv._peer.id, peerName: conv._peer.username || conv.name || "DM", convId: conv.id, video: !!video, local: stream, pc: null, startedAt: 0, pendingIce: [], muted: false, camOn: !!video };
+  callShowUI({ title: call.peerName, status: t("ringing"), mode: "outgoing" });
+  try {
+    const pc = createPC();
+    stream.getTracks().forEach((tr) => pc.addTrack(tr, stream));
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    state.socket.emit("call:offer", { conversationId: conv.id, toUserId: call.peerId, sdp: JSON.stringify(pc.localDescription), video: !!video });
+  } catch { showToast(t("callFailed"), "error"); teardownCall(); return; }
+  ringingTimeout = setTimeout(() => {
+    if (call && !call.startedAt) { teardownCall(); showToast(t("callNoAnswer"), "info"); }
+  }, RING_TIMEOUT_MS);
+}
+
+/** ربط أحداث إشارات المكالمات على مقبس حيّ — يُستدعى من connectSocket. */
+function bindCallEvents() {
+  state.socket.on("call:offer", ({ from, fromName, conversationId, sdp, video }) => {
+    if (call) return; // الخادم يمنع الانشغال المزدوج — حماية مزدوجة هنا
+    if (!callSupported()) { state.socket.emit("call:reject", { toUserId: from }); return; }
+    call = { role: "callee", peerId: from, peerName: fromName, convId: conversationId, video: !!video, local: null, pc: null, startedAt: 0, pendingIce: [], offer: sdp, muted: false, camOn: false };
+    callShowUI({ title: fromName, status: video ? t("incomingVideoCall") : t("incomingCall"), mode: "incoming" });
+    ringingTimeout = setTimeout(() => {
+      if (call && !call.startedAt) { state.socket.emit("call:reject", { toUserId: call.peerId }); teardownCall(); }
+    }, RING_TIMEOUT_MS);
+  });
+
+  state.socket.on("call:answer", async ({ from, sdp }) => {
+    if (!call || call.role !== "caller" || call.peerId !== from) return;
+    clearTimeout(ringingTimeout);
+    try {
+      await call.pc.setRemoteDescription(JSON.parse(sdp));
+      await flushPendingIce();
+      $("call-status").textContent = t("connecting");
+    } catch { showToast(t("callFailed"), "error"); state.socket.emit("call:end", { toUserId: from }); teardownCall(); }
+  });
+
+  state.socket.on("call:ice", async ({ from, candidate }) => {
+    if (!call || call.peerId !== from || typeof candidate !== "string") return;
+    // قد تصل المرشحات قبل جهوزية الوصف البعيد — تُخزّن مؤقتاً ثم تُفرَّغ
+    if (!call.pc || !call.pc.remoteDescription) { call.pendingIce.push(candidate); return; }
+    try { await call.pc.addIceCandidate(JSON.parse(candidate)); } catch {}
+  });
+
+  state.socket.on("call:reject", ({ from }) => {
+    if (!call || call.peerId !== from) return;
+    teardownCall();
+    showToast(t("callRejected"), "info");
+  });
+
+  state.socket.on("call:end", ({ from, reason }) => {
+    if (!call || call.peerId !== from) return;
+    teardownCall();
+    showToast(reason === "disconnect" ? t("callDisconnected") : t("callEnded"), "info");
+  });
+
+  state.socket.on("call:busy", () => {
+    if (!call || call.role !== "caller" || call.startedAt) return;
+    teardownCall();
+    showToast(t("callBusy"), "error");
+  });
+
+  state.socket.on("call:unavailable", () => {
+    if (!call || call.role !== "caller" || call.startedAt) return;
+    teardownCall();
+    showToast(t("callUnavailable"), "error");
+  });
+
+  state.socket.on("call:error", ({ reason }) => {
+    if (!call || call.role !== "caller" || call.startedAt) return;
+    teardownCall();
+    showToast(reason === "forbidden" ? t("callForbidden") : t("callFailed"), "error");
+  });
+}
+
+// أزرار طبقة المكالمة (عناصر ثابتة في الصفحة — تُربط مرة واحدة)
+$("call-btn").addEventListener("click", () => startCall(false));
+$("video-call-btn").addEventListener("click", () => startCall(true));
+$("call-hangup").addEventListener("click", () => {
+  if (call && state.socket) state.socket.emit("call:end", { toUserId: call.peerId });
+  teardownCall();
+});
+$("call-reject").addEventListener("click", () => {
+  if (call && state.socket) state.socket.emit("call:reject", { toUserId: call.peerId });
+  teardownCall();
+});
+$("call-accept").addEventListener("click", async () => {
+  if (!call || call.role !== "callee") return;
+  clearTimeout(ringingTimeout);
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: call.video ? { width: 640 } : false });
+    call.local = stream;
+    const pc = createPC();
+    stream.getTracks().forEach((tr) => pc.addTrack(tr, stream));
+    await pc.setRemoteDescription(JSON.parse(call.offer));
+    const ans = await pc.createAnswer();
+    await pc.setLocalDescription(ans);
+    state.socket.emit("call:answer", { toUserId: call.peerId, sdp: JSON.stringify(pc.localDescription) });
+    await flushPendingIce();
+    callShowUI({ title: call.peerName, status: t("connecting"), mode: "active" });
+  } catch { showToast(t("callFailed"), "error"); if (state.socket && call) state.socket.emit("call:end", { toUserId: call.peerId }); teardownCall(); }
+});
+$("call-mic").addEventListener("click", () => {
+  if (!call?.local) return;
+  call.muted = !call.muted;
+  call.local.getAudioTracks().forEach((tr) => { tr.enabled = !call.muted; });
+  $("call-mic").textContent = call.muted ? "🔇" : "🎙";
+  $("call-mic").setAttribute("aria-label", call.muted ? t("micOff") : t("micOn"));
+});
+$("call-cam").addEventListener("click", () => {
+  if (!call?.local) return;
+  call.camOn = !call.camOn;
+  call.local.getVideoTracks().forEach((tr) => { tr.enabled = call.camOn; });
+  $("call-cam").textContent = call.camOn ? "🎥" : "🚫";
+});
+window.addEventListener("pagehide", () => { if (call && state.socket) state.socket.emit("call:end", { toUserId: call.peerId }); });
 
 // ===== Boot =====
 (async function boot() {
