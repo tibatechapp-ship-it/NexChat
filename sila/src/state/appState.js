@@ -8,6 +8,9 @@ export const state = {
   online: navigator.onLine,
   peers: new Map(),
   p2pChannels: 0, // قنوات WebRTC المباشرة المفتوحة (شارة P2P)
+  // لقطة اللوحة المشتركة (CRDT — P2 #12): تُحدّث من main.js بعد كل تغيير
+  // كي يرسمها uiRenderer دون اعتماد دائري بين العرض وخدمة CRDT.
+  board: { counter: 0, items: [] },
   messages: [
     {
       author: "ليان",

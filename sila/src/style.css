@@ -748,3 +748,19 @@ button {
 
 /* ===== شارة القنوات المباشرة (WebRTC P2P — تقنية Meshenger) ===== */
 .p2p-hint{color:var(--muted);opacity:.85;font-size:0.72rem;line-height:1.5}
+
+/* ===== اللوحة المشتركة (CRDT) ===== */
+.board{display:flex;flex-direction:column;gap:10px}
+.board-counter{display:flex;align-items:center;gap:10px}
+.board-counter button{width:34px;height:34px;border-radius:50%;border:1px solid var(--stroke,#2a3a44);background:var(--surface,#16232b);color:var(--text,#e8f1f4);font-size:1.1rem;cursor:pointer}
+.board-counter button:hover{border-color:var(--accent,#b6f09c)}
+.board-counter b{font-size:1.5rem;min-width:2ch;text-align:center;font-variant-numeric:tabular-nums}
+.board-counter small{color:var(--muted,#7d919b);font-size:.75rem}
+.board-form{display:flex;gap:6px}
+.board-form input{flex:1;padding:8px 10px;border-radius:10px;border:1px solid var(--stroke,#2a3a44);background:var(--surface,#16232b);color:var(--text,#e8f1f4);font-size:.8125rem;font-family:inherit}
+.board-form button{width:34px;border-radius:10px;border:1px solid var(--stroke,#2a3a44);background:var(--surface,#16232b);color:var(--text,#e8f1f4);cursor:pointer}
+.board-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto}
+.board-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;border-radius:10px;background:var(--surface,#16232b);border:1px solid var(--stroke,#2a3a44);font-size:.8125rem;color:var(--text,#e8f1f4)}
+.board-item button{border:0;background:transparent;color:var(--muted,#7d919b);cursor:pointer;font-size:.8rem}
+.board-item button:hover{color:#e0675f}
+.board-empty{color:var(--muted,#7d919b);font-size:.75rem;padding:6px 0}

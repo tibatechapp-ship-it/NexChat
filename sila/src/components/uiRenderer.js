@@ -45,6 +45,39 @@ export function describePeerCount(count) {
 }
 
 /**
+ * تسمية حالة اللوحة المشتركة (CRDT) في ترويسة القسم.
+ */
+export function boardCounterLabel(board) {
+  const items = Array.isArray(board?.items) ? board.items.length : 0;
+  if (!items) return "فارغة";
+  if (items === 1) return "عنصر واحد";
+  if (items === 2) return "عنصران";
+  if (items <= 10) return `${items} عناصر`;
+  return `${items} عنصراً`;
+}
+
+/**
+ * عناصر القائمة المشتركة — معرّفها فريد عبر العقد فزر الحذف يصلح محلياً
+ * وعن بُعد معاً (عملية rem واحدة تتقارب في كل النسخ).
+ */
+export function renderBoardItems(board) {
+  const items = Array.isArray(board?.items) ? board.items : [];
+  if (!items.length) {
+    return `<li class="board-empty">لا عناصر بعد — أضف أول عنصر وستظهر عند كل العقد.</li>`;
+  }
+  return items
+    .map(
+      (item) => `
+    <li class="board-item">
+      <span>${escapeHtml(item.value)}</span>
+      <button type="button" data-board-remove="${escapeHtml(item.id)}" aria-label="حذف العنصر">✕</button>
+    </li>
+  `
+    )
+    .join("");
+}
+
+/**
  * توليد HTML لقائمة الغرف
  */
 export function renderRoomList() {
@@ -238,6 +271,27 @@ export function renderApp() {
               <span>${Number(state.p2pChannels) || 0}</span>
             </div>
             <small class="p2p-hint">WebRTC جهاز-إلى-جهاز على الشبكة المحلية — بلا خادم وسيط للبيانات</small>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-title">
+              <strong>لوحة مشتركة (CRDT)</strong>
+              <span>${boardCounterLabel(state.board)}</span>
+            </div>
+            <div class="board">
+              <div class="board-counter">
+                <button id="board-inc" aria-label="زيادة العدّاد المشترك" title="زيادة العدّاد المشترك">＋</button>
+                <b id="board-counter-value">${Number(state.board.counter) || 0}</b>
+                <small>عدّاد مشترك يتقارب بين كل العقد</small>
+              </div>
+              <form id="board-form" class="board-form">
+                <input id="board-input" placeholder="أضف عنصراً للقائمة المشتركة..." autocomplete="off" maxlength="200" />
+                <button type="submit" aria-label="إضافة">↑</button>
+              </form>
+              <ul id="board-list" class="board-list">
+                ${renderBoardItems(state.board)}
+              </ul>
+            </div>
           </div>
           
           <div class="detail-section room-rules">

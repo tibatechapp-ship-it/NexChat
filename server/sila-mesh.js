@@ -23,6 +23,12 @@ const MAX_ROOMS_PER_SOCKET = 8;
 const MAX_ROOM_NAME = 32;
 const RATE_WINDOW_MS = 10000;
 const RATE_MAX = 10;
+// رسائل اللوحة المشتركة (CRDT — P2 #12): عملية واحدة صغيرة لكل رسالة،
+// وسقف أضيق من النص لأن العمليات تتدفق بكثرة عبر كل مسارات النقل.
+const MAX_OP_BYTES = 2048;
+// علامة الصادر (اختيارية — تستخدمها بوابة LoRa): تُستدعى لكل رسالة نصية
+// صالحة بعد التطهير. بلا تخزين ولا DB — دالة واحدة في الذاكرة.
+let messageTap = null;
 // سقوف إشارات WebRTC (تقنية Meshenger — P1): SDP/ICE تمر موجّهة فقط،
 // والبيانات نفسها تسير مباشرة بين الجهازين بلا خادم وسيط.
 const MAX_SDP_BYTES = 20000;
@@ -40,6 +46,15 @@ function validRoomName(name) {
 
 function sanitizeMessage(input) {
   if (!input || typeof input !== "object") return null;
+  // لوحة CRDT مشتركة: كائن عملية صغير يمرّ كما هو (بعد فحص الحجم) —
+  // الاستقبال يطبّقه فيتقارب كل الأجهزة على نفس الحالة.
+  if (input.kind === "board") {
+    if (!input.op || typeof input.op !== "object") return null;
+    let opJson;
+    try { opJson = JSON.stringify(input.op); } catch { return null; }
+    if (!opJson || opJson.length > MAX_OP_BYTES) return null;
+    return { kind: "board", id: typeof input.id === "string" ? input.id.slice(0, 64) : "", op: JSON.parse(opJson) };
+  }
   const { author, initials, time, text, transport } = input;
   if (typeof text !== "string" || !text.trim()) return null;
   if (Buffer.byteLength(text, "utf8") > MAX_TEXT_BYTES) return null;
@@ -51,6 +66,15 @@ function sanitizeMessage(input) {
     text,
     transport: transport === "net" ? "net" : "mesh",
   };
+}
+
+/**
+ * تسجيل/إزالة علامة الصادر — تُستدعى بـ(room، message) لكل رسالة صالحة.
+ * تمرير null يزيلها. بوابة واحدة كحد أقصى (آخر تسجيل يفوز).
+ * @param {((room: string, message: object) => void) | null} fn
+ */
+function setMessageTap(fn) {
+  messageTap = typeof fn === "function" ? fn : null;
 }
 
 /**
@@ -101,6 +125,9 @@ function init(io) {
       }
       const target = validRoomName(room) && socket._silaRooms.has(room) ? room : "square";
       nsp.to(target).emit("sila:message", { from: socket.id, message: clean, at: Date.now() });
+      // علامة الصادر للبوابات الاختيارية (LoRa) — نصوص فقط (عمليات اللوحة
+      // ليست بثاً راديوياً). فشلها يُسكت دائماً.
+      if (messageTap && clean.text != null) { try { messageTap(target, clean); } catch {} }
     });
 
     // إعلان الحضور عبر الخادم (يقابل announcePresence في BroadcastChannel).
@@ -146,4 +173,4 @@ function init(io) {
   return nsp;
 }
 
-module.exports = { init, validRoomName, sanitizeMessage, MAX_TEXT_BYTES, RATE_MAX, MAX_SDP_BYTES, MAX_ICE_BYTES };
+module.exports = { init, validRoomName, sanitizeMessage, setMessageTap, MAX_TEXT_BYTES, MAX_OP_BYTES, RATE_MAX, MAX_SDP_BYTES, MAX_ICE_BYTES };

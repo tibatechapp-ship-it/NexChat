@@ -59,6 +59,7 @@
       <button id="new-chat" class="icon" aria-label="محادثة جديدة" title="محادثة جديدة">+</button>
       <button id="new-group" class="icon" aria-label="مجموعة جديدة" title="مجموعة">👥</button>
       <button id="stories-btn" class="icon" aria-label="ستوري" title="ستوري">◉</button>
+      <button id="lock-btn" class="icon" aria-label="القفل والمسح" title="القفل والمسح">🔒</button>
       <button id="logout" class="icon" aria-label="تسجيل الخروج" title="خروج">⎋</button>
     </div>
   </header>
@@ -169,6 +170,74 @@
   </div>
 </section>
 
+<!-- Lock overlay — قفل برمز + رمز إضطرار (P2 #11 — نمط Briar):
+     إدخال رمز الإضطرار يمسح كل البيانات المحلية فوراً ويعرض شاشة دخول فارغة -->
+<section id="lock-overlay" class="lock-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="lock-title">
+  <div class="card">
+    <div class="logo">رسن</div>
+    <h3 id="lock-title">التطبيق مقفل</h3>
+    <label class="sr-only" for="lock-pin">رمز القفل</label>
+    <input id="lock-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••" />
+    <p id="lock-err" class="err" role="alert" aria-live="assertive"></p>
+    <button id="lock-unlock" class="btn-primary">فتح</button>
+  </div>
+</section>
+
+<!-- Panic & lock modal — إدارة القفل ورمز الإضطرار والمسح -->
+<section id="panic-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="panic-title">
+  <div class="modal-card">
+    <h3 id="panic-title">🔒 القفل والمسح الذاتي</h3>
+
+    <div class="panic-section">
+      <b>قفل التطبيق برمز</b>
+      <small id="panic-lock-state">—</small>
+      <div class="panic-row">
+        <input id="lock-new" type="password" inputmode="numeric" placeholder="رمز جديد (4-8 أرقام)" autocomplete="off" />
+        <input id="lock-new2" type="password" inputmode="numeric" placeholder="تأكيد الرمز" autocomplete="off" />
+      </div>
+      <p id="lock-new-err" class="err" role="alert"></p>
+      <div class="modal-actions">
+        <button id="lock-set" class="btn-primary">تفعيل القفل</button>
+        <button id="lock-clear" class="btn-secondary">إلغاء القفل</button>
+        <button id="lock-now" class="btn-secondary">قفل الآن</button>
+      </div>
+    </div>
+
+    <div class="panic-section panic-duress">
+      <b>رمز الإضطرار</b>
+      <small id="panic-duress-state">—</small>
+      <p class="panic-hint">عند إدخاله على شاشة القفل: يُمسح كل شيء محلياً فوراً وتظهر شاشة دخول فارغة — كأن لم يحدث شيء.</p>
+      <div class="panic-row">
+        <input id="duress-new" type="password" inputmode="numeric" placeholder="رمز الإضطرار (مختلف)" autocomplete="off" />
+        <input id="duress-new2" type="password" inputmode="numeric" placeholder="تأكيد الرمز" autocomplete="off" />
+      </div>
+      <p id="duress-new-err" class="err" role="alert"></p>
+      <div class="modal-actions">
+        <button id="duress-set" class="btn-primary">ضبط رمز الإضطرار</button>
+        <button id="duress-clear" class="btn-secondary">إزالة</button>
+      </div>
+    </div>
+
+    <div class="panic-section">
+      <b>مسح محلي فوري</b>
+      <p class="panic-hint">يمسح كل بيانات رسن على هذا الجهاز (المفاتيح، الجلسات، الطابور) — يعمل بلا إنترنت.</p>
+      <input id="local-wipe-confirm" placeholder='اكتب "امسح" للتأكيد' autocomplete="off" />
+      <p id="local-wipe-err" class="err" role="alert"></p>
+      <button id="local-wipe-btn" class="call-danger">مسح الجهاز الآن</button>
+    </div>
+
+    <div class="panic-section">
+      <b>مسح الحساب عن بُعد</b>
+      <p class="panic-hint">يحذف الحساب وكل أثره من الخادم (الرسائل المرسلة، المرفقات، النسخ الاحتياطية) بكلمة المرور — ثم يمسح هذا الجهاز.</p>
+      <input id="remote-wipe-password" type="password" placeholder="كلمة المرور" autocomplete="current-password" />
+      <p id="remote-wipe-err" class="err" role="alert"></p>
+      <button id="remote-wipe-btn" class="call-danger">حذف الحساب ومسح الجهاز</button>
+    </div>
+
+    <button id="panic-close" class="btn-secondary">إغلاق</button>
+  </div>
+</section>
+
 <div id="upload-status" class="upload-status hidden">
   <div class="upload-bar"><div id="upload-progress"></div></div>
   <span id="upload-label">جاري الرفع...</span>
@@ -181,6 +250,7 @@
 <script type="module" src="/identity.js"></script>
 <script src="/session.js"></script>
 <script type="module" src="/ui-identity.js"></script>
+<script type="module" src="/panic.js"></script>
 <script src="/app.js"></script>
   <div id="verify-modal" class="hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="verify-title">
     <div class="verify-panel">

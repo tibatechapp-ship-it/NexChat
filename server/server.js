@@ -9,6 +9,10 @@ const { router: authRouter, verifyToken, authRequired } = require("./auth");
 const security = require("./security");
 const push = require("./push");
 const notifications = require("./notifications");
+// مسح الذعر + وضع الإضطرار (P2 #11 — نمط Briar): حذف الحساب وكل أثره عن بُعد
+const panic = require("./panic");
+// بوابة LoRa الاختيارية (P2 #10 — نمط Meshtastic): معطلة بلا LORA_MQTT_URL
+const loraGateway = require("./lora-gateway");
 // صلة (sila) — مساحة الـ Mesh المحلية المنفصلة (بلا DB ولا مصادقة؛ راجع server/sila-mesh.js)
 const silaMesh = require("./sila-mesh");
 
@@ -30,11 +34,15 @@ app.use("/api/", security.apiLimiter);
 app.use("/api/attachments", security.uploadLimiter);
 app.use("/api/auth", authRouter);
 app.use("/api", notifications.createRouter({ authRequired }));
+app.use("/api", panic.createRouter({ authRequired, io }));
 
 const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 } });
 
 push.init();
 silaMesh.init(io); // مساحة /sila على Socket.IO — نقل حقيقي بين الأجهزة لصلة
+// بوابة LoRa (Meshtastic MQTT) — معطلة ما لم تُضبط LORA_MQTT_URL؛ انقطاعها
+// لا يؤثر إطلاقاً على صلة أو رسن (فشل هادئ بطبيعته).
+loraGateway.init(io, silaMesh);
 
 // Deployment identity. Render exports the commit it is serving, so a post-deploy
 // check can prove that the LIVE process runs the code which just landed — a 200

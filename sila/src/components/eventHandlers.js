@@ -30,10 +30,24 @@ export function bindEvents(handlers) {
     }
     if (event.target.closest("#new-room")) {
       handlers.onCreateRoom();
+      return;
+    }
+    if (event.target.closest("#board-inc")) {
+      handlers.onBoardIncrement();
+      return;
+    }
+    const boardRemove = event.target.closest("[data-board-remove]");
+    if (boardRemove) {
+      handlers.onBoardRemove(boardRemove.dataset.boardRemove);
     }
   });
 
   root.addEventListener("submit", (event) => {
+    if (event.target.closest("#board-form")) {
+      event.preventDefault();
+      handlers.onBoardAdd();
+      return;
+    }
     if (!event.target.closest("#composer")) return;
     event.preventDefault();
     handlers.onSendMessage();
@@ -71,4 +85,9 @@ export const eventHandlers = {
   onCreateRoom: () => {
     alert("إنشاء المساحات سيضاف في الإصدار التالي.");
   },
+
+  // اللوحة المشتركة (CRDT) — تُنفّذ في main.js (تحتاج خدمة CRDT ومسارات النقل)
+  onBoardIncrement: () => {},
+  onBoardAdd: () => {},
+  onBoardRemove: () => {},
 };

@@ -3,6 +3,7 @@ import { state, addMessage, addPeer, setActiveRoom, setRoomCount } from "./state
 import { MeshService } from "./services/meshService.js";
 import { NetBridge } from "./services/netBridge.js";
 import { RtcService } from "./services/rtcService.js";
+import { SharedBoard } from "./services/crdt.js";
 import { generateNodeId, formatTime, newMessageId } from "./utils/helpers.js";
 import { paint } from "./components/uiRenderer.js";
 import { bindEvents, eventHandlers } from "./components/eventHandlers.js";
@@ -14,13 +15,64 @@ const meshService = new MeshService(nodeId);
 // جسر الخادم: نقل حقيقي بين الأجهزة عبر /sila في Socket.IO — يفشل بهدوء
 // إذا لم يُخدم من خادم رسن (Vite مثلاً) ويعتمد BroadcastChannel وحده.
 const netBridge = new NetBridge(nodeId);
-netBridge.onMessage((data) => {
-  addPeer(data.from, Date.now());
-  addMessage({ ...data.message, mine: false, transport: "net" });
+
+// ===== اللوحة المشتركة (CRDT — P2 #12 — نمط Offline Protocol) =====
+// عدّاد + قائمة مشتركة تتقارب بين كل العقد عبر كل مسارات النقل نفسها
+// التي تحمل الرسائل (BroadcastChannel + P2P + الخادم) — بلا خادم حقيقة.
+const board = new SharedBoard(nodeId);
+
+function syncBoardSnapshot() {
+  state.board = {
+    counter: board.counter.value(),
+    items: board.list.toList(),
+  };
+}
+
+// بث حزمة لوحة عبر المسارات الثلاثة معاً (نقل مزدوج/ثلاثي كما في الرسائل) —
+// الاستقبال يزيل التكرار عبر معرف العملية في crdt.js.
+function broadcastBoard(payload) {
+  meshService.sendMessage(payload);
+  rtcService.send(payload);
+  netBridge.send(payload);
+}
+
+board.onOp((op) => broadcastBoard({ id: op.oid, kind: "board", op }));
+board.onChange(() => {
+  syncBoardSnapshot();
   paint();
+});
+
+// لقطة دورية للانضمام المتأخر: عند وصول عقدة جديدة نرسل حالتنا كاملة
+// (بحد أقصى مرة كل 15 ثانية لكل عقدة) — الدمج انتصامي فلا خطر من التكرار.
+let lastSnapshotAt = 0;
+function maybeSendBoardSnapshot() {
+  const now = Date.now();
+  if (now - lastSnapshotAt < 15000) return;
+  lastSnapshotAt = now;
+  broadcastBoard({
+    id: "snap" + now.toString(36) + Math.random().toString(36).slice(2, 6),
+    kind: "board",
+    op: board.snapshot(),
+  });
+}
+
+// ===== مسار الاستقبال الموحد: رسائل المحادثة أو عمليات اللوحة =====
+function handleIncoming(message, extra = {}) {
+  if (message && message.kind === "board") {
+    board.applyOp(message.op);
+    return;
+  }
+  addPeer(extra.from ?? "peer", Date.now());
+  addMessage({ ...message, mine: false, ...extra });
+  paint();
+}
+
+netBridge.onMessage((data) => {
+  handleIncoming({ ...data.message }, { from: data.from, transport: "net" });
 });
 netBridge.onPresence((data) => {
   addPeer(data.from, data.at);
+  maybeSendBoardSnapshot();
   paint();
 });
 netBridge.onStateChange((connected) => {
@@ -37,12 +89,11 @@ netBridge.connect();
 // RTCPeerConnection غير متاح — نقل BroadcastChannel + الخادم يبقى يعمل وحده.
 const rtcService = new RtcService(netBridge);
 rtcService.onMessage((data) => {
-  addPeer(data.from, Date.now());
-  addMessage({ ...data.message, mine: false, transport: "p2p" });
-  paint();
+  handleIncoming({ ...data.message }, { from: data.from, transport: "p2p" });
 });
 rtcService.onChannelsChange((open) => {
   state.p2pChannels = open;
+  if (open) maybeSendBoardSnapshot();
   paint();
 });
 
@@ -71,14 +122,13 @@ setInterval(() => {
 
 // معالجة الرسائل الواردة
 meshService.onMessage((data) => {
-  addPeer(data.from, Date.now());
-  addMessage({ ...data.message, mine: false });
-  paint();
+  handleIncoming({ ...data.message }, { from: data.from });
 });
 
 // معالجة وجود العقد الأخرى
 meshService.onPresence((data) => {
   addPeer(data.from, data.at);
+  maybeSendBoardSnapshot();
   paint();
 });
 
@@ -112,6 +162,24 @@ eventHandlers.onSendMessage = () => {
   input.focus();
 };
 
+// ===== معالجات اللوحة المشتركة =====
+eventHandlers.onBoardIncrement = () => {
+  board.increment(1); // تطبيق محلي + بث عبر onOp تلقائياً
+};
+
+eventHandlers.onBoardAdd = () => {
+  const input = document.querySelector("#board-input");
+  const value = input.value.trim();
+  if (!value) return;
+  board.addItem(value);
+  input.value = "";
+  input.focus();
+};
+
+eventHandlers.onBoardRemove = (id) => {
+  if (id) board.removeItem(id);
+};
+
 // معالج تحديث العقد
 eventHandlers.onRefreshPeers = () => {
   meshService.announcePresence();
@@ -133,4 +201,5 @@ window.addEventListener("offline", () => {
 // بدء التطبيق
 meshService.announcePresence();
 bindEvents(eventHandlers);
+syncBoardSnapshot();
 paint();
