@@ -59,7 +59,8 @@ export function addPeer(peerId, timestamp) {
 }
 
 export function getPeerCount() {
-  return Math.max(2, state.peers.size + 1);
+  // عدد العقد الأخرى المعروفة فعلياً (بدون احتساب هذا الجهاز) — لا أرقام وهمية.
+  return state.peers.size;
 }
 
 /** تحديث عدّاد ساحة من مصدر حقيقي (الخادم عبر sila:peers). */

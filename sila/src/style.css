@@ -610,6 +610,11 @@ button {
 .peer {
   gap: 9px;
 }
+.peer-empty {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
 .peer .avatar {
   width: 29px;
   height: 29px;

@@ -1,5 +1,48 @@
 import { state, rooms, getPeerCount } from "../state/appState.js";
-import { escapeHtml } from "../utils/helpers.js";
+import { escapeHtml, formatTime } from "../utils/helpers.js";
+
+/** ألوان أفاتار متناوبة لعقد الشبكة الحقيقية. */
+const PEER_PALETTE = ["yellow", "pink", "purple", "lime"];
+
+/**
+ * قائمة العقد القريبة من `state.peers` الفعلية.
+ * تُستبدل القائمة التجريبية الثابتة: لا أسماء ولا حالة وهمية.
+ */
+export function renderPeers() {
+  const peers = [...state.peers.entries()];
+  if (peers.length === 0) {
+    return `<p class="peer-empty">لا توجد عقد أخرى بعد — افتح صلة على جهاز آخر في نفس الشبكة.</p>`;
+  }
+  return peers
+    .map(([id, seenAt], index) => {
+      const name = String(id);
+      const time = formatTime(new Date(Number(seenAt) || Date.now()));
+      return `
+    <div class="peer">
+      <span class="avatar avatar-${PEER_PALETTE[index % PEER_PALETTE.length]}">
+        ${escapeHtml(name.slice(0, 1))}
+      </span>
+      <div>
+        <strong>${escapeHtml(name.slice(0, 8))}</strong>
+        <small>متصل عبر Mesh · ${escapeHtml(time)}</small>
+      </div>
+      <i></i>
+    </div>
+  `;
+    })
+    .join("");
+}
+
+/**
+ * صياغة عربية صحيحة لعدد العقد القريبة.
+ */
+export function describePeerCount(count) {
+  if (!count || count < 1) return "لا عقد قريبة بعد";
+  if (count === 1) return "عقدة واحدة قريبة";
+  if (count === 2) return "عقدتان قريبتان";
+  if (count <= 10) return `${count} عقد قريبة`;
+  return `${count} عقدة قريبة`;
+}
 
 /**
  * توليد HTML لقائمة الغرف
@@ -8,11 +51,11 @@ export function renderRoomList() {
   return rooms.map((room) => `
     <button 
       class="room-item ${room.name === state.activeRoom ? "active" : ""}" 
-      data-room="${room.name}"
+      data-room="${escapeHtml(room.name)}"
     >
-      <span class="room-dot ${room.color}"></span>
-      <span>${room.name}</span>
-      <b>${room.count}</b>
+      <span class="room-dot ${escapeHtml(room.color)}"></span>
+      <span>${escapeHtml(room.name)}</span>
+      <b>${Number(room.count) || 0}</b>
     </button>
   `).join("");
 }
@@ -24,13 +67,13 @@ export function renderMessages() {
   return state.messages.map((message) => `
     <article class="message ${message.mine ? "mine" : ""}">
       <div class="avatar ${message.mine ? "avatar-you" : "avatar-other"}">
-        ${message.initials}
+        ${escapeHtml(message.initials)}
       </div>
       <div class="message-body">
         <div class="message-meta">
-          <strong>${message.author}</strong>
-          <time>${message.time}</time>
-          <span class="route ${message.transport}">
+          <strong>${escapeHtml(message.author)}</strong>
+          <time>${escapeHtml(message.time)}</time>
+          <span class="route ${message.transport === "internet" ? "internet" : "mesh"}">
             ${message.transport === "mesh" ? "Mesh" : "Net"}
           </span>
         </div>
@@ -41,10 +84,25 @@ export function renderMessages() {
 }
 
 /**
+ * رسم التطبيق داخل الصفحة (#app).
+ * يحتفظ بمسودة النص المكتوبة ويمرّر المحادثة لآخر رسالة.
+ */
+export function paint() {
+  const root = document.querySelector("#app");
+  const draft = document.querySelector("#message-input")?.value ?? "";
+  root.innerHTML = renderApp();
+  const input = document.querySelector("#message-input");
+  if (input) input.value = draft;
+  const messages = document.querySelector("#messages");
+  if (messages) messages.scrollTop = messages.scrollHeight;
+}
+
+/**
  * توليد HTML الكامل للتطبيق
  */
 export function renderApp() {
   const meshCount = getPeerCount();
+  const meshLabel = describePeerCount(meshCount);
   
   return `
     <main class="shell">
@@ -90,7 +148,7 @@ export function renderApp() {
             <div class="mesh-orbit"><span></span><i></i><b></b></div>
             <div>
               <strong>شبكة Mesh محلية</strong>
-              <p>${meshCount} عقدة قريبة نشطة</p>
+              <p>${meshLabel}</p>
             </div>
             <button id="refresh-peers" aria-label="تحديث العقد">↻</button>
           </div>
@@ -104,8 +162,8 @@ export function renderApp() {
         <section class="chat-panel">
           <div class="chat-header">
             <div>
-              <div class="eyebrow">مساحة مشتركة / ${state.activeRoom}</div>
-              <h1>${state.activeRoom}</h1>
+              <div class="eyebrow">مساحة مشتركة / ${escapeHtml(state.activeRoom)}</div>
+              <h1>${escapeHtml(state.activeRoom)}</h1>
               <p>محادثة متزامنة عبر الإنترنت والشبكة المحلية</p>
             </div>
             <div class="header-actions">
@@ -135,7 +193,7 @@ export function renderApp() {
             <input 
               id="message-input" 
               autocomplete="off" 
-              placeholder="اكتب رسالة إلى ${state.activeRoom}..." 
+              placeholder="اكتب رسالة إلى ${escapeHtml(state.activeRoom)}..." 
             />
             <button class="send" aria-label="إرسال الرسالة">↑</button>
             <div class="composer-hint">
@@ -170,30 +228,7 @@ export function renderApp() {
               <span>${meshCount}</span>
             </div>
             <div class="peer-list">
-              <div class="peer">
-                <span class="avatar avatar-yellow">ل</span>
-                <div>
-                  <strong>ليان</strong>
-                  <small>متصل عبر Mesh</small>
-                </div>
-                <i></i>
-              </div>
-              <div class="peer">
-                <span class="avatar avatar-pink">س</span>
-                <div>
-                  <strong>سامر</strong>
-                  <small>متصل عبر الإنترنت</small>
-                </div>
-                <i class="net-dot"></i>
-              </div>
-              <div class="peer">
-                <span class="avatar avatar-purple">ن</span>
-                <div>
-                  <strong>ندى</strong>
-                  <small>آخر ظهور منذ 3 د</small>
-                </div>
-                <i class="away-dot"></i>
-              </div>
+              ${renderPeers()}
             </div>
           </div>
           
