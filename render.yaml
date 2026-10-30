@@ -38,6 +38,12 @@ services:
         generateValue: true
       - key: DATA_DIR
         value: /opt/render/project/src/data
+      # FCM push credentials — the full service-account JSON is pasted once at
+      # blueprint apply time (Render prompts for sync:false values). server/push.js
+      # reads it via process.env.FCM_CREDENTIALS; without it the push layer is
+      # disabled by design, everything else keeps working.
+      - key: FCM_CREDENTIALS
+        sync: false
     disk:
       name: rasan-data
       mountPath: /opt/render/project/src/data
