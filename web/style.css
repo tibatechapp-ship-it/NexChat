@@ -294,6 +294,19 @@ header h2{font-size:1.0625rem;color:var(--text);font-weight:600}
 .location-chip{display:inline-block;padding:6px 12px;border-radius:10px;background:var(--surface-2);border:1px solid var(--surface-3);color:var(--accent);text-decoration:none;font-size:0.8125rem;font-weight:600}
 .location-chip:hover{border-color:var(--accent)}
 
+/* بطاقة الاستطلاع (P5 — نمط Telegram/Signal): خيارات قابلة للنقر بعدّ وأشرطة */
+.poll-card{display:flex;flex-direction:column;gap:4px;min-width:220px;max-width:320px;padding:8px 10px;border-radius:12px;background:var(--surface-2);border:1px solid var(--surface-3);margin-top:4px}
+.poll-question{font-size:0.875rem;color:var(--text);line-height:1.4}
+.poll-option{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid var(--surface-3);background:transparent;color:var(--text);cursor:pointer;font-family:inherit;font-size:0.8125rem;text-align:start}
+.poll-option:hover{border-color:var(--accent)}
+.poll-option.mine{border-color:var(--accent);background:rgba(42,156,142,.10);font-weight:700}
+.poll-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.poll-count{color:var(--muted);font-variant-numeric:tabular-nums}
+.poll-total{color:var(--muted);font-size:0.6875rem;text-align:end}
+/* مؤلّف الاستطلاع داخل النافذة */
+.poll-options{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.poll-option-input{width:100%}
+
 /* قائمة المحادثات: شريط الأرشيف + عنصر مؤرشف */
 .archive-bar{padding:6px 8px;border-bottom:1px solid var(--surface-3)}
 .archive-toggle{width:100%;padding:8px 12px;border-radius:10px;border:1px dashed var(--surface-3);background:transparent;color:var(--muted);cursor:pointer;font-size:0.8125rem;font-family:inherit}

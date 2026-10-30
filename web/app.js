@@ -10,6 +10,7 @@ const state = {
   // لا تخرج عن الجهاز)، تفاعلات لكل رسالة، الرد الجاري، المحفوظات والأرشيف.
   _msgCache: new Map(),   // mid -> { text, senderName, time, type }
   _reactions: new Map(),  // mid -> [{ emoji, userId }]
+  _pollVotes: new Map(),  // P5: mid -> [{ userId, optionIndex }] — أصوات الاستطلاعات الحية
   replyTo: null,          // { id, text, senderName } — الرد الجاري
   starred: JSON.parse(localStorage.getItem("rasan_starred") || "[]"),
   archived: JSON.parse(localStorage.getItem("rasan_archived") || "[]"),
@@ -33,6 +34,20 @@ function toggleArchive(cid) {
   if (idx >= 0) state.archived.splice(idx, 1); else state.archived.push(cid);
   saveArchived(); renderList();
 }
+
+// ===== P5: مسودات محلية لكل محادثة (نمط الجميع) — نص غير مرسل يبقى على
+// الجهاز فقط (localStorage) فيُستعاد عند العودة للمحادثة ويُمسح عند الإرسال.
+// E2EE آمنة: لا تُرسل للخادم إطلاقاً.
+function loadDrafts() { try { return JSON.parse(localStorage.getItem("rasan_drafts") || "{}"); } catch { return {}; } }
+function getDraft(cid) { return loadDrafts()[String(cid)] || ""; }
+function saveDraft(cid, text) {
+  try {
+    const d = loadDrafts();
+    if (text) d[String(cid)] = text; else delete d[String(cid)];
+    localStorage.setItem("rasan_drafts", JSON.stringify(d));
+  } catch {}
+}
+function clearDraft(cid) { saveDraft(cid, ""); }
 // قائمة تفاعلات ثابتة مطابقة لقائمة الخادم (interactions.ALLOWED_REACTIONS)
 const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡", "🔥", "✅"];
 
@@ -351,6 +366,8 @@ async function connectSocket() {
     // تنظيف الذاكرة المحلية (P4): النص المفكوك والتفاعلات والمحفوظات — بلا أثر
     state._msgCache.delete(id);
     state._reactions.delete(id);
+    state._pollVotes?.delete(id); // P5: أصوات الاستطلاع ماتت مع الرسالة (زناد الخادم)
+    state._pollMeta?.delete(id);
     const si = state.starred.findIndex((s) => s.mid === id);
     if (si >= 0) { state.starred.splice(si, 1); saveStarred(); }
     if (state.replyTo?.id === id) { state.replyTo = null; updateReplyBar(); }
@@ -359,6 +376,11 @@ async function connectSocket() {
   state.socket.on("message:reaction", ({ conversationId, messageId, userId, emoji }) => {
     if (state.activeConv?.id !== conversationId) return;
     applyReactionUpdate({ messageId, userId, emoji });
+  });
+  // صوت استطلاع حي (P5): أعد رسم بطاقة الاستطلاع فوراً بلا إعادة جلب
+  state.socket.on("message:poll-vote", ({ conversationId, messageId, userId, optionIndex }) => {
+    if (state.activeConv?.id !== conversationId) return;
+    applyPollVoteUpdate({ messageId, userId, optionIndex });
   });
   state.socket.on("message:edited", async ({ id, ciphertext, iv, edited_at }) => {
     const el = document.querySelector(`[data-mid="${id}"]`);
@@ -599,6 +621,8 @@ async function openConversation(conv) {
   // بعد تحميل الرسائل: نص المثبّتة إن كان معرّفها ضمن المحمّلة (E2EE — يُفك محلياً)
   updatePinnedBanner();
   $("msg-input").focus();
+  // استعادة المسودة المحلية لهذه المحادثة (P5 — تبقى على الجهاز فقط)
+  $("msg-input").value = getDraft(conv.id);
 }
 
 async function ensureGroupKey(conv) {
@@ -630,6 +654,7 @@ function appendMessage(m) {
   // ذاكرة النصوص المفكوكة (P4): للردود والبحث والمحفوظات — محلية فقط
   if (m.id != null) state._msgCache.set(m.id, { text: m.text || "", senderName: m.senderName || "", time: m.time || 0, type: m.type || "text", conversationId: m.conversationId });
   if (m.reactions) state._reactions.set(m.id, m.reactions);
+  if (m.pollVotes) state._pollVotes.set(m.id, m.pollVotes); // P5: أصوات الاستطلاعات من الخادم
 
   // اقتباس الرد (P4): مرجع المعرف من الخادم + النص من الذاكرة المحلية (E2EE)
   if (m.replyTo != null) {
@@ -663,6 +688,18 @@ function appendMessage(m) {
       chip.textContent = `📍 ${t("locationMsg")} (${Number(loc.lat).toFixed(5)}, ${Number(loc.lng).toFixed(5)})`;
       span.replaceWith(chip);
     } catch { span.textContent = "📍"; }
+  }
+
+  // استطلاع رأي (P5 — نمط Telegram/Signal): السؤال والخيارات فُكّت محلياً من
+  // ciphertext (E2EE) — الخادم يرى فهارس الخيارات فقط (ميتاداتا).
+  if (m.type === "poll") {
+    try {
+      state._pollMeta = state._pollMeta || new Map();
+      const meta = JSON.parse(m.text);
+      if (!meta || !Array.isArray(meta.options)) throw new Error("bad poll");
+      state._pollMeta.set(m.id, { question: String(meta.question || ""), options: meta.options.map(String) });
+      span.replaceWith(renderPollCard(m.id));
+    } catch { span.textContent = m.text || "📊"; } // النسخة المتفائلة أثناء الإرسال
   }
 
   div.append(span, edited, small);
@@ -728,6 +765,58 @@ function applyReactionUpdate({ messageId, userId, emoji }) {
   if (list.length) state._reactions.set(messageId, list); else state._reactions.delete(messageId);
   const old = document.querySelector(`[data-reactions-for="${messageId}"]`);
   if (old) old.replaceWith(renderReactionChips(messageId));
+}
+
+// ===== P5: بطاقة الاستطلاع — خيارات قابلة للنقر بعدّ وأشرطة نسب، صوت واحد
+// لكل مستخدم (نفسه = سحب، مختلف = تغيير) — تحديث حي عبر message:poll-vote.
+function renderPollCard(mid) {
+  const card = document.createElement("div");
+  card.className = "poll-card";
+  card.dataset.pollFor = mid;
+  const meta = (state._pollMeta && state._pollMeta.get(mid)) || null;
+  if (!meta) { card.textContent = "📊"; return card; }
+  const votes = state._pollVotes.get(mid) || [];
+  const counts = meta.options.map((_o, i) => votes.filter((v) => v.optionIndex === i).length);
+  const total = votes.length;
+  const mineIdx = votes.find((v) => v.userId === state.user.id)?.optionIndex ?? null;
+
+  const q = document.createElement("b");
+  q.className = "poll-question";
+  q.textContent = meta.question;
+  card.appendChild(q);
+
+  meta.options.forEach((opt, i) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "poll-option" + (mineIdx === i ? " mine" : "");
+    row.setAttribute("aria-label", `${opt} — ${counts[i]}/${total || 0}`);
+    const label = document.createElement("span");
+    label.className = "poll-label";
+    label.textContent = (mineIdx === i ? "● " : "○ ") + opt;
+    const n = document.createElement("span");
+    n.className = "poll-count";
+    n.textContent = String(counts[i]);
+    row.append(label, n);
+    row.onclick = () =>
+      api(`/api/messages/${mid}/poll-vote`, { method: "PUT", body: JSON.stringify({ optionIndex: i }) })
+        .catch((e) => showToast(translateErr(e.message), "error"));
+    card.appendChild(row);
+  });
+
+  const foot = document.createElement("small");
+  foot.className = "poll-total";
+  foot.textContent = `${t("pollVotes")}: ${total}`;
+  card.appendChild(foot);
+  return card;
+}
+
+// حدث حي: صوت استطلاع تغيّر على الخادم — أعد رسم البطاقة فوراً بلا إعادة جلب
+function applyPollVoteUpdate({ messageId, userId, optionIndex }) {
+  const list = (state._pollVotes.get(messageId) || []).filter((v) => v.userId !== userId);
+  if (optionIndex != null) list.push({ userId, optionIndex });
+  if (list.length) state._pollVotes.set(messageId, list); else state._pollVotes.delete(messageId);
+  const old = document.querySelector(`[data-poll-for="${messageId}"]`);
+  if (old && state._pollMeta?.has(messageId)) old.replaceWith(renderPollCard(messageId));
 }
 
 function showMsgMenu(m, msgEl) {
@@ -844,8 +933,18 @@ $("send-form").addEventListener("submit", async (e) => {
     replyTo: state.replyTo?.id ?? null, // مرجع المعرف فقط — النص المقتبس محلي/مشفر
   }, { preview: text, pendingRender: true });
   $("msg-input").value = "";
+  clearDraft(state.activeConv.id); // المسودة أُرسلت — امسحها (P5)
   state.replyTo = null;
   updateReplyBar();
+});
+
+// حفظ المسودة تلقائياً أثناء الكتابة (P5) — مؤجّل 300ms ومحلي فقط (E2EE آمن)
+let _draftTimer = null;
+$("msg-input").addEventListener("input", (e) => {
+  if (!state.activeConv) return;
+  const val = e.target.value, cid = state.activeConv.id;
+  clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(() => saveDraft(cid, val), 300);
 });
 
 // ===== شريط الرد (P4): معاينة مقتبسة فوق حقل الكتابة + زر إلغاء =====
@@ -879,6 +978,54 @@ $("loc-btn")?.addEventListener("click", () => {
     () => showToast(t("locDenied"), "error"),
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
   );
+});
+
+// ===== استطلاعات الرأي (P5 — نمط Telegram/Signal): مؤلّف الاستطلاع — السؤال
+// والخيارات تُشفّر كصندوق واحد E2EE قبل الإرسال؛ الخادم يرى فهارس فقط.
+function addPollOptionInput() {
+  const box = $("poll-options");
+  if (box.children.length >= 10) return; // سقف الخادم: option_index ≤ 9
+  const input = document.createElement("input");
+  input.className = "poll-option-input";
+  input.placeholder = `${t("pollOptionPh")} ${box.children.length + 1}`;
+  input.maxLength = 120;
+  input.autocomplete = "off";
+  box.appendChild(input);
+}
+function resetPollForm() {
+  $("poll-question").value = "";
+  $("poll-options").innerHTML = "";
+  addPollOptionInput(); addPollOptionInput(); // خياران مبدئيان (Telegram)
+}
+$("poll-btn")?.addEventListener("click", () => {
+  if (!state.activeKey || !state.activeConv) return;
+  resetPollForm();
+  openModal("poll-modal");
+});
+$("poll-add-option")?.addEventListener("click", addPollOptionInput);
+$("close-poll")?.addEventListener("click", () => closeModal("poll-modal"));
+$("poll-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = $("poll-question").value.trim();
+  const options = [...$("poll-options").children].map((i) => i.value.trim()).filter(Boolean);
+  if (!question || options.length < 2) return showToast(t("pollNeedsMore"), "error");
+  const { ciphertext, iv } = await RasanCrypto.encrypt(state.activeKey, JSON.stringify({ kind: "poll", question, options }));
+  sendOrQueue({
+    conversationId: state.activeConv.id, ciphertext, iv, type: "poll", ephemeral_ttl: 0,
+    key_version: state.activeConv.type === "dm" ? 1 : (state.activeKeyVersion || 1),
+  }, { preview: `📊 ${question}`, pendingRender: true });
+  closeModal("poll-modal");
+});
+
+// ===== رسائل محفوظة لنفسي (P5 — نمط Telegram Saved Messages): مساحة شخصية
+// مشفرة DM بعضو واحد — مُكرِرة من الخادم: الاستدعاء المتكرر يعيد نفس المحادثة.
+$("saved-btn")?.addEventListener("click", async () => {
+  try {
+    const { id } = await api("/api/conversations/self", { method: "POST" });
+    await loadConversations();
+    const conv = state.convs.find((c) => c.id === id);
+    if (conv) { openConversation(conv); showToast(t("savedToast"), "info"); }
+  } catch (e) { showToast(translateErr(e.message), "error"); }
 });
 
 // ===== البحث المحلي (P4 — نمط Signal/Telegram): يبحث في النصوص المفكوكة

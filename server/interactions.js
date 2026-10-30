@@ -8,8 +8,13 @@
 //       القائمة (فحص في مسار socket message بـ server.js عبر isBlockedBetween).
 //   3. الردود (Replies) — مرجع معرّف فقط: النص المقتبس داخل ciphertext
 //      العميل (E2EE) — الخادم يخزن/يتحقق من المعرف ويعيد توزيعه.
-// التنظيف: زنادا db.js يمسحان التفاعلات على كل مسارات حذف الرسائل.
-// التفاعلات والحظر أسماء مستخدمين/أرقام فقط — لا نص حر يُخزَّن إطلاقاً.
+//   4. استطلاعات الرأي (Polls — P5) — نمط Telegram/Signal/Session: السؤال
+//      والخيارات داخل ciphertext العميل (E2EE) بنوع message type="poll"،
+//      والخادم يخزّن فهرس الخيار فقط (ميتاداتا بلا محتوى). صوت واحد لكل
+//      مستخدم لكل استطلاع: نفس الخيار = سحب، مختلف = تغيير. صوت مستخدم
+//      مجهول الرقم للعميل الآخر (userId فقط) — النتائج مجمعات أرقام.
+// التنظيف: زنادا db.js يمسحان التفاعلات وأصوات الاستطلاعات على كل مسارات
+// حذف الرسائل. التفاعلات والحظر أسماء/أرقام فقط — لا نص حر يُخزَّن إطلاقاً.
 const express = require("express");
 const { db } = require("./db");
 
@@ -52,6 +57,25 @@ function attachReactions(rows) {
     map.get(r.message_id).push({ emoji: r.emoji, userId: r.userId });
   }
   return rows.map((r) => (map.has(r.id) ? { ...r, reactions: map.get(r.id) } : r));
+}
+
+// أصوات استطلاعات صفوف رسائل (تجميع: [{userId, optionIndex}] لكل رسالة من
+// نوع poll) — نفس نمط attachReactions: تُستدعى من مسار جلب الرسائل في
+// server.js وتعيد صفوفاً جديدة بلا تعديل الأصل.
+function attachPollVotes(rows) {
+  if (!rows.length) return rows;
+  const ids = rows.filter((r) => r.type === "poll").map((r) => r.id).filter((id) => Number.isInteger(id));
+  if (!ids.length) return rows;
+  const map = new Map();
+  const placeholders = ids.map(() => "?").join(",");
+  const list = db
+    .prepare(`SELECT message_id, user_id AS userId, option_index AS optionIndex FROM poll_votes WHERE message_id IN (${placeholders}) ORDER BY created_at ASC`)
+    .all(...ids);
+  for (const v of list) {
+    if (!map.has(v.message_id)) map.set(v.message_id, []);
+    map.get(v.message_id).push({ userId: v.userId, optionIndex: v.optionIndex });
+  }
+  return rows.map((r) => (map.has(r.id) ? { ...r, pollVotes: map.get(r.id) } : r));
 }
 
 function createRouter({ authRequired, io }) {
@@ -99,7 +123,56 @@ function createRouter({ authRequired, io }) {
     res.json({ ok: true, emoji });
   });
 
-  // ===== 2) حظر المستخدمين — ثنائي الاتجاه في البوابات، أحادي في السجل =====
+  // ===== 2) تصويت استطلاع (P5) — وضع/تغيير/سحب صوت واحد لكل مستخدم =====
+  // السؤال والخيارات في ciphertext (E2EE)؛ الخادم يرى فهرس الخيار فقط.
+  router.put("/messages/:id/poll-vote", authRequired, (req, res) => {
+    const msgId = Number(req.params.id);
+    if (!Number.isInteger(msgId)) return res.status(400).json({ error: "bad id" });
+    const raw = (req.body || {}).optionIndex;
+    // الإزالة: optionIndex null/undefined = سحب الصوت (نمط toggle)
+    const removing = raw === null || raw === undefined;
+    if (!removing) {
+      // صرامة: يجب أن يكون raw نفسه عدداً صحيحاً (لا true→1 ولا "1"→1)
+      const idx = Number(raw);
+      if (!Number.isInteger(raw) || !Number.isInteger(idx) || idx < 0 || idx > 9)
+        return res.status(400).json({ error: "bad option index" });
+      var optionIndex = idx;
+    }
+
+    const msg = db
+      .prepare("SELECT id, conversation_id, sender_id, type, deleted FROM messages WHERE id = ?")
+      .get(msgId);
+    if (!msg || msg.conversation_id == null) return res.status(404).json({ error: "not found" });
+    // عضوية الغرفة شرط — لا صوت من خارج المحادثة
+    if (!getRole(msg.conversation_id, req.user.id)) return res.status(403).json({ error: "forbidden" });
+    // التصويت على استطلاعات فقط — لا تحويل رسالة عادية إلى قناة أصوات
+    if (msg.type !== "poll") return res.status(400).json({ error: "not a poll" });
+    if (msg.deleted) return res.status(400).json({ error: "message deleted" });
+
+    if (removing) {
+      db.prepare("DELETE FROM poll_votes WHERE message_id = ? AND user_id = ?").run(msgId, req.user.id);
+      io.to("conv:" + msg.conversation_id).emit("message:poll-vote", { conversationId: msg.conversation_id, messageId: msgId, userId: req.user.id, optionIndex: null });
+      return res.json({ ok: true, optionIndex: null });
+    }
+
+    // صوت واحد لكل مستخدم: نفس الخيار = سحب (toggle)، مختلف = تغيير (نمط Telegram)
+    const existing = db
+      .prepare("SELECT option_index AS optionIndex FROM poll_votes WHERE message_id = ? AND user_id = ?")
+      .get(msgId, req.user.id);
+    if (existing && existing.optionIndex === optionIndex) {
+      db.prepare("DELETE FROM poll_votes WHERE message_id = ? AND user_id = ?").run(msgId, req.user.id);
+      io.to("conv:" + msg.conversation_id).emit("message:poll-vote", { conversationId: msg.conversation_id, messageId: msgId, userId: req.user.id, optionIndex: null });
+      return res.json({ ok: true, optionIndex: null });
+    }
+    db.prepare(
+      `INSERT INTO poll_votes (message_id, user_id, option_index, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(message_id, user_id) DO UPDATE SET option_index = excluded.option_index, created_at = excluded.created_at`
+    ).run(msgId, req.user.id, optionIndex, Date.now());
+    io.to("conv:" + msg.conversation_id).emit("message:poll-vote", { conversationId: msg.conversation_id, messageId: msgId, userId: req.user.id, optionIndex });
+    res.json({ ok: true, optionIndex });
+  });
+
+  // ===== 3) حظر المستخدمين — ثنائي الاتجاه في البوابات، أحادي في السجل =====
   router.post("/users/:id/block", authRequired, (req, res) => {
     const targetId = Number(req.params.id);
     if (!Number.isInteger(targetId)) return res.status(400).json({ error: "bad id" });
@@ -128,4 +201,4 @@ function createRouter({ authRequired, io }) {
   return router;
 }
 
-module.exports = { createRouter, isBlockedBetween, hasBlocked, attachReactions, ALLOWED_REACTIONS, getRole };
+module.exports = { createRouter, isBlockedBetween, hasBlocked, attachReactions, attachPollVotes, ALLOWED_REACTIONS, getRole };

@@ -126,22 +126,36 @@ CREATE TABLE IF NOT EXISTS blocked_users (
   PRIMARY KEY (blocker_id, blocked_id)
 );
 CREATE INDEX IF NOT EXISTS idx_blocked_target ON blocked_users(blocked_id);
+CREATE TABLE IF NOT EXISTS poll_votes (
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  option_index INTEGER NOT NULL CHECK(option_index >= 0 AND option_index <= 9),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_poll_votes_msg ON poll_votes(message_id);
 `);
 
-// تنظيف تلقائي لتفاعلات الرسائل عند حذفها — يعمل على كل مسارات الحذف القائمة
-// (الرسائل المتلاشية، حذف المرسل عبر socket، الحذف الإشرافي الناعم deleted=1)
-// بلا تعديل أي سطر منها: الزناد يلتقط DELETE الصريح وUPDATE الحذف الناعم معاً.
+// تنظيف تلقائي لتفاعلات الرسائل وأصوات الاستطلاعات عند حذفها — يعمل على كل
+// مسارات الحذف القائمة (الرسائل المتلاشية، حذف المرسل عبر socket، الحذف
+// الإشرافي الناعم deleted=1) بلا تعديل أي سطر منها: الزناد يلتقط DELETE
+// الصريح وUPDATE الحذف الناعم معاً. (P5: أُضيف مسح poll_votes إلى الزنادين
+// عبر إعادة إنشائهما — القاعدة القائمة ترث التنظيف بلا تغيير في المسارات.)
 db.exec(`
-CREATE TRIGGER IF NOT EXISTS trg_msg_reactions_on_delete
+DROP TRIGGER IF EXISTS trg_msg_reactions_on_delete;
+DROP TRIGGER IF EXISTS trg_msg_reactions_on_softdelete;
+CREATE TRIGGER trg_msg_reactions_on_delete
 AFTER DELETE ON messages
 BEGIN
   DELETE FROM message_reactions WHERE message_id = OLD.id;
+  DELETE FROM poll_votes WHERE message_id = OLD.id;
 END;
-CREATE TRIGGER IF NOT EXISTS trg_msg_reactions_on_softdelete
+CREATE TRIGGER trg_msg_reactions_on_softdelete
 AFTER UPDATE OF deleted ON messages
 WHEN NEW.deleted = 1
 BEGIN
   DELETE FROM message_reactions WHERE message_id = NEW.id;
+  DELETE FROM poll_votes WHERE message_id = NEW.id;
 END;
 `);
 

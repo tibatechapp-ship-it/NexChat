@@ -349,6 +349,26 @@ app.post("/api/conversations", authRequired, (req, res) => {
   res.json({ id: cid });
 });
 
+// رسائل محفوظة (نمط Telegram «Saved Messages» — P5): مساحة شخصية لنفسي —
+// DM بعضو واحد (أنا) اسمها «رسائل محفوظة». مُكرِرة (idempotent): الاستدعاء
+// المتكرر يعيد نفس المحادثة. كل شيء آخر يعمل تلقائياً: التشفير، التعديل،
+// المتلاشية، المرفقات — والحظر/الدفع غير مفعّلين بلا طرف ثانٍ.
+app.post("/api/conversations/self", authRequired, (req, res) => {
+  const existing = db
+    .prepare(`SELECT c.id FROM conversations c
+      WHERE c.type = 'dm' AND c.owner_id = ?
+        AND (SELECT COUNT(*) FROM conversation_members WHERE conversation_id = c.id) = 1
+        AND EXISTS (SELECT 1 FROM conversation_members WHERE conversation_id = c.id AND user_id = ?)`)
+    .get(req.user.id, req.user.id);
+  if (existing) return res.json({ id: existing.id, created: false });
+  const info = db.prepare("INSERT INTO conversations (type, name, description, owner_id, created_at) VALUES ('dm', 'رسائل محفوظة', ?, ?, ?)")
+    .run("مساحة شخصية — مرئية لك وحدها", req.user.id, Date.now());
+  const cid = info.lastInsertRowid;
+  db.prepare("INSERT INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)").run(cid, req.user.id, Date.now());
+  io.to("conv:" + cid).emit("conversation:created", { id: cid });
+  res.json({ id: cid, created: true });
+});
+
 app.get("/api/conversations/:id", authRequired, (req, res) => {
   const m = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(req.params.id, req.user.id);
   if (!m) return res.status(403).json({ error: "forbidden" });
@@ -400,8 +420,9 @@ app.get("/api/conversations/:id/messages", authRequired, (req, res) => {
   const m = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(req.params.id, req.user.id);
   if (!m) return res.status(403).json({ error: "forbidden" });
   const rows = db.prepare(`SELECT m.id, m.conversation_id AS conversationId, m.sender_id AS senderId, u.username AS senderName, m.type, m.ciphertext, m.iv, m.ephemeral_ttl, m.time, m.key_version, m.attachment_id AS attachmentId, m.deleted, m.edited_at, m.reply_to_id AS replyTo FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted = 0 ORDER BY m.time DESC LIMIT 100`).all(req.params.id).reverse();
-  // تفاعلات الرسائل (P4) مجمّعة لصفحة الرسائل الحالية — ميتاداتا فقط بلا محتوى
-  res.json({ messages: interactions.attachReactions(rows) });
+  // تفاعلات الرسائل (P4) وأصوات الاستطلاعات (P5) مجمّعة لصفحة الرسائل الحالية —
+  // ميتاداتا فقط بلا محتوى
+  res.json({ messages: interactions.attachPollVotes(interactions.attachReactions(rows)) });
 });
 
 // ===== Group key =====

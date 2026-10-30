@@ -65,6 +65,8 @@
       <button id="stories-btn" class="icon" aria-label="ستوري" title="ستوري">◉</button>
       <!-- المحفوظات (P4 — نمط Telegram): قائمة الرسائل المحفوظة محلياً على الجهاز -->
       <button id="starred-btn" class="icon" aria-label="المحفوظات" title="المحفوظات">⭐</button>
+      <!-- رسائل محفوظة لنفسي (P5 — نمط Telegram Saved Messages): مساحة شخصية مشفرة -->
+      <button id="saved-btn" class="icon" aria-label="رسائل محفوظة" title="رسائل محفوظة (لنفسي)">🔖</button>
       <button id="lock-btn" class="icon" aria-label="القفل والمسح" title="القفل والمسح">🔒</button>
       <button id="logout" class="icon" aria-label="تسجيل الخروج" title="خروج">⎋</button>
     </div>
@@ -112,6 +114,8 @@
       <button type="button" id="attach" class="icon" aria-label="إرفاق ملف" title="إرفاق">📎</button>
       <!-- مشاركة الموقع (P4 — نمط Meshtastic GPS): إحداثيات مشفرة E2EE -->
       <button type="button" id="loc-btn" class="icon" aria-label="مشاركة الموقع" title="مشاركة الموقع">📍</button>
+      <!-- استطلاع رأي (P5 — نمط Telegram/Signal): السؤال والخيارات مشفرة E2EE -->
+      <button type="button" id="poll-btn" class="icon" aria-label="استطلاع رأي" title="استطلاع رأي">📊</button>
       <button type="button" id="mic" class="icon" aria-label="مذكرة صوتية" title="مذكرة صوتية">🎤</button>
       <!-- وضع للّكة (PTT — نمط Zello/WhatsApp Walkie-Talkie): استمرار الضغط للتحدث -->
       <button type="button" id="ptt-toggle" class="icon" aria-label="وضع للّكة" aria-pressed="false" title="وضع للّكة (PTT)">🗣</button>
@@ -166,6 +170,24 @@
       <button id="create-dm" class="btn-primary" data-i18n="create">إنشاء</button>
       <button id="close-dm" class="btn-secondary" data-i18n="close">إغلاق</button>
     </div>
+  </div>
+</section>
+
+<!-- Poll composer modal (P5 — نمط Telegram/Signal): السؤال والخيارات تُشفّر
+     كصندوق واحد E2EE قبل الإرسال — الخادم لا يراهما إطلاقاً -->
+<section id="poll-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="poll-title">
+  <div class="modal-card">
+    <h3 id="poll-title">📊 استطلاع رأي</h3>
+    <form id="poll-form">
+      <label class="sr-only" for="poll-question">السؤال</label>
+      <input id="poll-question" placeholder="السؤال..." maxlength="280" autocomplete="off" />
+      <div id="poll-options" class="poll-options"></div>
+      <div class="modal-actions">
+        <button type="button" id="poll-add-option" class="btn-secondary">+ خيار</button>
+        <button type="submit" id="poll-create" class="btn-primary">إنشاء</button>
+        <button type="button" id="close-poll" class="btn-secondary">إغلاق</button>
+      </div>
+    </form>
   </div>
 </section>
 
