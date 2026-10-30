@@ -5,7 +5,54 @@ const state = {
   myKeys: null,
   convs: [], activeConv: null, activeKey: null, activeKeyVersion: 1,
   locale: localStorage.getItem("rasan_locale") || "ar",
+  outbox: [], // رسائل مؤجلة لغياب الاتصال — تُمسح عند العودة (طابور أوفلاين)
 };
+
+// ===== طابور الأوفلاين =====
+// عند انقطاع الاتصال تُحفظ الرسائل المشفّرة محلياً (localStorage) وتُعرض
+// بعلامة ⏳، وعند العودة تُعاد الإرسال ثم يستبدل echo الخادم النسخة
+// المتفائلة عبر clientId — بلا تكرار وبلا فقد.
+const OUTBOX_KEY = "rasan_outbox";
+function newClientId() { return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+function saveOutbox() { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(state.outbox)); } catch {} }
+function loadOutbox() { try { state.outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch { state.outbox = []; } }
+
+function setMsgStatus(clientId, status) {
+  if (!clientId) return;
+  const el = document.querySelector(`[data-cid="${clientId}"] .msg-status`);
+  if (el) { el.dataset.status = status; el.textContent = status === "sent" ? "✓" : "⏳"; }
+}
+
+/** إرسال فوري إن وُجد اتصال، وإلا حفظ في الطابور — وفي الحالتين عرض متفائل. */
+function sendOrQueue(payload, { preview, pendingRender } = {}) {
+  payload.clientId = newClientId();
+  const connected = !!state.socket?.connected;
+  if (connected) state.socket.emit("message", payload);
+  else { state.outbox.push({ ...payload }); saveOutbox(); }
+  if (state.activeConv?.id === payload.conversationId && pendingRender) {
+    appendMessage({
+      id: null, clientId: payload.clientId, conversationId: payload.conversationId,
+      senderId: state.user.id, senderName: state.user.username,
+      type: payload.type, text: preview || "", time: Date.now(),
+      pending: !connected,
+    });
+  }
+}
+
+function flushOutbox() {
+  if (!state.socket?.connected || !state.outbox.length) return;
+  for (const item of [...state.outbox]) {
+    // أعد عرض النسخة المتفائلة إن كانت المحادثة مفتوحة (بعد إعادة التحميل مثلاً)
+    if (state.activeConv?.id === item.conversationId && !document.querySelector(`[data-cid="${item.clientId}"]`)) {
+      appendMessage({
+        id: null, clientId: item.clientId, conversationId: item.conversationId,
+        senderId: state.user.id, senderName: state.user.username,
+        type: item.type, text: item._preview || "", time: Date.now(), pending: true,
+      });
+    }
+    state.socket.emit("message", item);
+  }
+}
 
 applyI18n(state.locale);
 
@@ -243,7 +290,17 @@ async function connectSocket() {
   // is exactly here.
   if (!window.io) await loadScript("/socket.io/socket.io.js");
   state.socket = io({ auth: { token: state.token } });
+  state.socket.on("connect", () => { loadOutbox(); flushOutbox(); });
+  state.socket.on("disconnect", () => { if (state.user) showToast(I18N[state.locale].offlineQueued || "انقطع الاتصال — ستوضع الرسائل في الطابور", "error"); });
+  // إقرار الخادم: الرسالة حُفظت — مؤشر ✓
+  state.socket.on("message:ack", ({ clientId }) => setMsgStatus(clientId, "sent"));
   state.socket.on("message", async (msg) => {
+    // استبدال النسخة المتفائلة للرسائل المُرسلة من هذا الجهاز (بلا تكرار)
+    if (msg.clientId && msg.senderId === state.user.id) {
+      document.querySelector(`[data-cid="${msg.clientId}"]`)?.remove();
+      const idx = state.outbox.findIndex(o => o.clientId === msg.clientId);
+      if (idx >= 0) { state.outbox.splice(idx, 1); saveOutbox(); }
+    }
     if (state.activeConv && msg.conversationId === state.activeConv.id) {
       if (msg.type === "file") {
         const text = await decryptMessage(msg);
@@ -277,6 +334,11 @@ async function connectSocket() {
   });
   state.socket.on("presence", ({ userId, online }) => {
     document.querySelectorAll(`[data-uid="${userId}"]`).forEach(el => el.classList.toggle("online", online));
+  });
+  // إنذار طوارئ: لافتة حمراء في المحادثة المفتوحة، وتنبيه إن كانت في الخلفية
+  state.socket.on("emergency", ({ conversationId, byName }) => {
+    if (state.activeConv?.id === conversationId) showEmergencyBanner(byName);
+    else showToast(`🚨 إنذار طوارئ من ${byName} — في محادثة أخرى`, "error");
   });
   state.socket.on("group-key:updated", async ({ by, key_version }) => {
     if (!state.activeConv || by === state.user.id) return;
@@ -359,6 +421,9 @@ async function openConversation(conv) {
   $("title").textContent = conv.name || "DM";
   $("messages").innerHTML = "";
   $("typing").textContent = "";
+  $("emergency-banner").classList.add("hidden");
+  // زر الطوارئ متاح للمجموعات والقنوات (بث جماعي كما في Zello) — لا للخاص
+  $("emergency-btn").classList.toggle("hidden", !(conv.type === "group" || conv.type === "channel"));
   state.socket.emit("join", { conversationId: conv.id });
   $("rotate-key").classList.toggle("hidden", conv.type === "dm");
 
@@ -418,6 +483,17 @@ function appendMessage(m) {
 
   div.append(b, span, edited, small);
 
+  // مؤشر التسليم لرسائلي: ⏳ في الطابور / ✓ حُفظت على الخادم
+  if (m.senderId === state.user.id) {
+    if (m.clientId) div.dataset.cid = m.clientId;
+    const st = document.createElement("span");
+    st.className = "msg-status";
+    st.dataset.status = m.pending ? "queued" : "sent";
+    st.textContent = m.pending ? "⏳" : "✓";
+    st.title = m.pending ? "في الطابور — تُرسل عند عودة الاتصال" : "تم الإرسال";
+    div.appendChild(st);
+  }
+
   if (m.senderId === state.user.id && m.type !== "file") {
     div.tabIndex = 0;
     div.setAttribute("aria-label", t("msgActionsHint"));
@@ -475,9 +551,12 @@ async function editMessage(m) {
 $("send-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = $("msg-input").value.trim();
-  if (!text || !state.activeKey) return;
+  if (!text || !state.activeKey || !state.activeConv) return;
   const { ciphertext, iv } = await RasanCrypto.encrypt(state.activeKey, text);
-  state.socket.emit("message", { conversationId: state.activeConv.id, ciphertext, iv, type: "text", ephemeral_ttl: 0, key_version: state.activeConv.type === "dm" ? 1 : (state.activeKeyVersion || 1) });
+  sendOrQueue({
+    conversationId: state.activeConv.id, ciphertext, iv, type: "text", ephemeral_ttl: 0,
+    key_version: state.activeConv.type === "dm" ? 1 : (state.activeKeyVersion || 1),
+  }, { preview: text, pendingRender: true });
   $("msg-input").value = "";
 });
 
@@ -497,16 +576,31 @@ $("file-input").addEventListener("change", async (e) => {
   $("file-input").value = "";
   if (!state.activeKey) return showToast(t("keyNotReady"), "error");
   if (file.size > 30 * 1024 * 1024) return showToast(t("maxFileSize"), "error");
+  try {
+    const buf = await file.arrayBuffer();
+    await uploadAndSendAttachment(buf, {
+      filename: file.name,
+      mime: file.type || "application/octet-stream",
+      size: file.size,
+    }, file.name);
+  } catch (err) {
+    console.error(err);
+    showToast(t("uploadFailed") + err.message, "error");
+    $("upload-status").classList.add("hidden");
+  }
+});
 
+/** التشفير + الرفع + الإرسال — مسار مشترك بين المرفقات والمذكرات الصوتية. */
+async function uploadAndSendAttachment(buf, meta, label) {
+  if (!state.activeKey || !state.activeConv) throw new Error("no key");
   try {
     $("upload-status").classList.remove("hidden");
-    $("upload-label").textContent = `تشفير ${file.name}...`;
+    $("upload-label").textContent = `تشفير ${label}...`;
     $("upload-progress").style.width = "5%";
 
-    const buf = await file.arrayBuffer();
     const { ciphertext, iv: fileIv } = await RasanCrypto.encryptFile(state.activeKey, buf);
 
-    $("upload-label").textContent = `رفع ${file.name}...`;
+    $("upload-label").textContent = `رفع ${label}...`;
     $("upload-progress").style.width = "20%";
 
     const xhr = new XMLHttpRequest();
@@ -524,18 +618,99 @@ $("file-input").addEventListener("change", async (e) => {
     $("upload-label").textContent = "إرسال...";
     $("upload-progress").style.width = "95%";
 
-    const meta = { filename: file.name, mime: file.type || "application/octet-stream", size: file.size, attachmentId, fileIv };
-    const { ciphertext: msgCt, iv: msgIv } = await RasanCrypto.encrypt(state.activeKey, JSON.stringify(meta));
-    state.socket.emit("message", { conversationId: state.activeConv.id, ciphertext: msgCt, iv: msgIv, type: "file", attachmentId, key_version: state.activeConv.type === "dm" ? 1 : (state.activeKeyVersion || 1) });
+    const fullMeta = { ...meta, attachmentId, fileIv };
+    const { ciphertext: msgCt, iv: msgIv } = await RasanCrypto.encrypt(state.activeKey, JSON.stringify(fullMeta));
+    sendOrQueue({
+      conversationId: state.activeConv.id, ciphertext: msgCt, iv: msgIv,
+      type: "file", attachmentId,
+      key_version: state.activeConv.type === "dm" ? 1 : (state.activeKeyVersion || 1),
+    }, { preview: meta.kind === "voice" ? "🎤 مذكرة صوتية" : "📎 ملف", pendingRender: true });
 
     $("upload-progress").style.width = "100%";
     setTimeout(() => $("upload-status").classList.add("hidden"), 400);
   } catch (err) {
+    $("upload-status").classList.add("hidden");
+    throw err;
+  }
+}
+
+// ===== المذكرات الصوتية (voice notes — من بحث Zello/واتساب) =====
+// تسجيل بالمايكروفون → تشفير → رفع عبر مسار المرفقات → رسالة kind:"voice"
+// تُشغّل داخل المحادثة بعنصر audio قياسي (يدعم التشغيل خارج سياق الكتابة).
+let mediaRecorder = null, recChunks = [], recTimer = null, recStart = 0, recStream = null;
+const VOICE_MAX_MS = 120 * 1000; // حد أقصى دقيقتان كالمذكرات الصوتية المعتادة
+
+$("mic").addEventListener("click", startRecording);
+
+async function startRecording() {
+  if (!state.activeConv) return;
+  if (!state.activeKey) return showToast(t("keyNotReady"), "error");
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    return showToast("التسجيل الصوتي غير مدعوم في هذا المتصفح", "error");
+  }
+  try {
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch { return showToast("تعذر الوصول إلى الميكروفون", "error"); }
+
+  const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(m => {
+    try { return MediaRecorder.isTypeSupported?.(m); } catch { return false; }
+  });
+  try {
+    mediaRecorder = new MediaRecorder(recStream, mime ? { mimeType: mime } : undefined);
+  } catch { recStream.getTracks().forEach(tr => tr.stop()); return showToast("التسجيل الصوتي غير مدعوم", "error"); }
+
+  recChunks = [];
+  mediaRecorder.ondataavailable = (e) => { if (e.data?.size) recChunks.push(e.data); };
+  mediaRecorder.start(250);
+  recStart = Date.now();
+
+  $("send-form").classList.add("hidden");
+  $("recording-bar").classList.remove("hidden");
+  $("rec-timer").textContent = "0:00";
+  recTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - recStart) / 1000);
+    $("rec-timer").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    if (Date.now() - recStart >= VOICE_MAX_MS) sendVoiceNote(); // توقف تلقائي عند الحد
+  }, 250);
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+  recStream?.getTracks().forEach(tr => tr.stop());
+  recStream = null;
+  clearInterval(recTimer);
+  $("recording-bar").classList.add("hidden");
+  $("send-form").classList.remove("hidden");
+}
+
+$("rec-cancel").addEventListener("click", () => { stopRecording(); recChunks = []; });
+$("rec-send").addEventListener("click", sendVoiceNote);
+
+async function sendVoiceNote() {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+  const durationMs = Date.now() - recStart;
+  const mime = mediaRecorder.mimeType || "audio/webm";
+  stopRecording();
+  if (!recChunks.length) { recChunks = []; return; }
+  const blob = new Blob(recChunks, { type: mime });
+  recChunks = [];
+  if (blob.size > 30 * 1024 * 1024) return showToast(t("maxFileSize"), "error");
+  const secs = Math.max(1, Math.round(durationMs / 1000));
+  const ext = mime.includes("mp4") ? "m4a" : "webm";
+  try {
+    const buf = await blob.arrayBuffer();
+    await uploadAndSendAttachment(buf, {
+      kind: "voice",
+      filename: `voice-note.${ext}`,
+      mime: mime.split(";")[0],
+      size: blob.size,
+      durationMs,
+    }, "المذكرة الصوتية");
+  } catch (err) {
     console.error(err);
     showToast(t("uploadFailed") + err.message, "error");
-    $("upload-status").classList.add("hidden");
   }
-});
+}
 
 // ===== New DM =====
 async function createDM(username, errEl) {
@@ -618,6 +793,32 @@ async function rotateGroupKey(conv) {
   return newVersion;
 }
 
+// ===== إنذار الطوارئ (من بحث Zello — بث فوري لكل الأعضاء) =====
+let emergencyTimer = null;
+$("emergency-btn").addEventListener("click", async () => {
+  if (!state.activeConv) return;
+  if (!confirm("إطلاق إنذار طوارئ لكل أعضاء هذه المحادثة؟")) return;
+  try {
+    await api(`/api/conversations/${state.activeConv.id}/emergency`, { method: "POST", body: JSON.stringify({}) });
+    showToast("تم إطلاق الإنذار لكل الأعضاء", "success");
+  } catch (err) {
+    if (String(err.message).includes("cooldown")) showToast("أرسلت إنذاراً مؤخراً — انتظر دقيقة", "error");
+    else showToast(translateErr(err.message), "error");
+  }
+});
+
+$("emergency-dismiss").addEventListener("click", () => {
+  $("emergency-banner").classList.add("hidden");
+  clearTimeout(emergencyTimer);
+});
+
+function showEmergencyBanner(byName) {
+  $("emergency-text").textContent = `إنذار طوارئ من ${byName}`;
+  $("emergency-banner").classList.remove("hidden");
+  clearTimeout(emergencyTimer);
+  emergencyTimer = setTimeout(() => $("emergency-banner").classList.add("hidden"), 30000);
+}
+
 // ===== Back / Logout =====
 $("back").addEventListener("click", () => {
   state.activeConv = null; state.activeKey = null;
@@ -668,10 +869,13 @@ function appendFileMessage(m, meta) {
   const div = document.createElement("div");
   div.className = "msg " + (m.senderId === state.user.id ? "mine" : "other");
   div.dataset.mid = m.id;
+  if (m.clientId && m.senderId === state.user.id) div.dataset.cid = m.clientId;
 
   const b = document.createElement("b"); b.textContent = m.senderName;
+  const isVoice = meta.kind === "voice" || (meta.mime || "").startsWith("audio/");
+  const dur = meta.durationMs ? ` — ${Math.floor(meta.durationMs / 60000)}:${String(Math.round((meta.durationMs % 60000) / 1000)).padStart(2, "0")}` : "";
   const att = document.createElement("div"); att.className = "attachment";
-  att.innerHTML = `<div class="file-card"><span class="icon">⏳</span><div class="meta"><b>${escapeHtml(meta.filename)}</b><small>${formatSize(meta.size)} — جاري التحميل...</small></div></div>`;
+  att.innerHTML = `<div class="file-card"><span class="icon">${isVoice ? "🎤" : "⏳"}</span><div class="meta"><b>${isVoice ? "مذكرة صوتية" : escapeHtml(meta.filename)}</b><small>${formatSize(meta.size)}${isVoice ? dur : " — جاري التحميل..."}</small></div></div>`;
   const small = document.createElement("small"); small.textContent = new Date(m.time).toLocaleTimeString(state.locale, { hour: "2-digit", minute: "2-digit" });
 
   div.append(b, att, small);
@@ -715,6 +919,7 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;"
 // ===== Boot =====
 (async function boot() {
   if (!state.token) return;
+  loadOutbox();
   try {
     const { user } = await api("/api/auth/me");
     state.user = user;

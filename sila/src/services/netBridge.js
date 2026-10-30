@@ -38,7 +38,6 @@ export class NetBridge {
       this.announce();
       this.onStateChangeCallback?.(true);
     });
-
     this.socket.on("disconnect", () => {
       this.connected = false;
       this.onStateChangeCallback?.(false);
@@ -66,6 +65,18 @@ export class NetBridge {
   send(message) {
     if (!this.connected) return false;
     this.socket.emit("sila:message", { room: this.room, message });
+    return true;
+  }
+
+  /**
+   * الانضمام لساحة أخرى على الخادم (ساحات صلة) — يبقى مربوطاً بـ"square"
+   * كذلك (الخادم ينضم له تلقائياً). يفشل بهدوء بلا اتصال.
+   */
+  join(room) {
+    if (!this.connected || !room || room === this.room) return false;
+    this.room = room;
+    this.socket.emit("sila:join", { room });
+    this.announce();
     return true;
   }
 

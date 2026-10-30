@@ -72,6 +72,18 @@ class SettingsScreen extends StatelessWidget {
                 ? (v) => context.read<NotificationPreferences>().setInvites(v)
                 : null,
           ),
+          SwitchListTile(
+            secondary: const Icon(Icons.emergency_outlined),
+            title: const Text('إشعارات إنذارات الطوارئ'),
+            subtitle: const Text(
+              'تنبيه صوتي مهم عند إطلاق إنذار في مجموعة/قناة — يُنصح بإبقائه مفعّلاً',
+            ),
+            value: notifPrefs.emergenciesEnabled,
+            onChanged: notifPrefs.loaded
+                ? (v) =>
+                    context.read<NotificationPreferences>().setEmergencies(v)
+                : null,
+          ),
           const Divider(height: 32),
           const Padding(
             padding: EdgeInsets.all(16),

@@ -75,6 +75,7 @@ class PushApi {
       return {
         'messages': prefs['messages'] == true,
         'invites': prefs['invites'] == true,
+        'emergencies': prefs['emergencies'] == true,
       };
     } catch (_) {
       return null;
@@ -85,13 +86,18 @@ class PushApi {
   Future<bool> savePreferences({
     required bool messages,
     required bool invites,
+    bool emergencies = true,
   }) async {
     if (_jwt == null) return false;
     try {
       final res = await _client.put(
         _u('/api/push/preferences'),
         headers: _headers,
-        body: jsonEncode({'messages': messages, 'invites': invites}),
+        body: jsonEncode({
+          'messages': messages,
+          'invites': invites,
+          'emergencies': emergencies,
+        }),
       );
       return res.statusCode == 200;
     } catch (_) {

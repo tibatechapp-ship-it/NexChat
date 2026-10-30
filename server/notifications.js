@@ -25,39 +25,51 @@ db.exec(`CREATE TABLE IF NOT EXISTS notification_prefs (
   updated_at INTEGER NOT NULL
 );`);
 
+// ترحيل للأعمدة الأحدث (إنذارات الطوارئ) — CREATE IF NOT EXISTS لا يضيف
+// أعمدة لجداول موجودة مسبقاً، فنستخدم ALTER مع تجاهل الخطأ إن وُجد العمود.
+try { db.exec("ALTER TABLE notification_prefs ADD COLUMN emergencies_enabled INTEGER NOT NULL DEFAULT 1"); } catch {}
+
 const getPrefsStmt = db.prepare(
-  "SELECT messages_enabled, invites_enabled FROM notification_prefs WHERE user_id = ?"
+  "SELECT messages_enabled, invites_enabled, emergencies_enabled FROM notification_prefs WHERE user_id = ?"
 );
 const upsertPrefsStmt = db.prepare(
-  `INSERT INTO notification_prefs (user_id, messages_enabled, invites_enabled, updated_at)
-   VALUES (?, ?, ?, ?)
+  `INSERT INTO notification_prefs (user_id, messages_enabled, invites_enabled, updated_at, emergencies_enabled)
+   VALUES (?, ?, ?, ?, ?)
    ON CONFLICT(user_id) DO UPDATE SET
      messages_enabled = excluded.messages_enabled,
      invites_enabled = excluded.invites_enabled,
-     updated_at = excluded.updated_at`
+     updated_at = excluded.updated_at,
+     emergencies_enabled = excluded.emergencies_enabled`
 );
 
 function defaultPrefs() {
-  return { messages: true, invites: true };
+  return { messages: true, invites: true, emergencies: true };
 }
 
 function getPrefs(userId) {
   const row = getPrefsStmt.get(userId);
   if (!row) return defaultPrefs();
-  return { messages: !!row.messages_enabled, invites: !!row.invites_enabled };
+  return {
+    messages: !!row.messages_enabled,
+    invites: !!row.invites_enabled,
+    // قاعدة قديمة بلا العمود الجديد → القيمة الافتراضية (مفعّل)
+    emergencies: row.emergencies_enabled === undefined ? true : !!row.emergencies_enabled,
+  };
 }
 
-function setPrefs(userId, { messages, invites } = {}) {
+function setPrefs(userId, { messages, invites, emergencies } = {}) {
   const cur = getPrefs(userId);
   const next = {
     messages: typeof messages === "boolean" ? messages : cur.messages,
     invites: typeof invites === "boolean" ? invites : cur.invites,
+    emergencies: typeof emergencies === "boolean" ? emergencies : cur.emergencies,
   };
   upsertPrefsStmt.run(
     userId,
     next.messages ? 1 : 0,
     next.invites ? 1 : 0,
-    Date.now()
+    Date.now(),
+    next.emergencies ? 1 : 0
   );
   return next;
 }
@@ -67,6 +79,7 @@ function canPush(userId, kind) {
   const prefs = getPrefs(userId);
   if (kind === "new_message") return prefs.messages;
   if (kind === "group_invite") return prefs.invites;
+  if (kind === "emergency") return prefs.emergencies;
   return false;
 }
 
@@ -74,6 +87,8 @@ function canPush(userId, kind) {
 const TEMPLATES = {
   new_message: { title: "رسن", body: "لديك رسالة جديدة" },
   group_invite: { title: "رسن", body: "لديك دعوة إلى مجموعة" },
+  // إنذار الطوارئ: قالب ثابت أيضاً — لا أي محتوى من الرسالة أو المرسل
+  emergency: { title: "رسن", body: "🚨 تنبيه طوارئ — افتح التطبيق الآن" },
 };
 
 const ALLOWED_DATA_KEYS = ["conversationId", "messageId"];
@@ -122,14 +137,17 @@ function createRouter({ authRequired }) {
   });
 
   router.put("/push/preferences", authRequired, (req, res) => {
-    const { messages, invites } = req.body || {};
+    const { messages, invites, emergencies } = req.body || {};
     if (messages !== undefined && typeof messages !== "boolean") {
       return res.status(400).json({ error: "messages must be boolean" });
     }
     if (invites !== undefined && typeof invites !== "boolean") {
       return res.status(400).json({ error: "invites must be boolean" });
     }
-    const preferences = setPrefs(req.user.id, { messages, invites });
+    if (emergencies !== undefined && typeof emergencies !== "boolean") {
+      return res.status(400).json({ error: "emergencies must be boolean" });
+    }
+    const preferences = setPrefs(req.user.id, { messages, invites, emergencies });
     res.json({ ok: true, preferences });
   });
 
@@ -144,7 +162,7 @@ function createRouter({ authRequired }) {
     if (!TEMPLATES[kind]) {
       return res
         .status(400)
-        .json({ error: "kind must be one of: new_message, group_invite" });
+        .json({ error: "kind must be one of: new_message, group_invite, emergency" });
     }
     const cid = toInt(conversationId);
     if (cid === null || cid <= 0) {

@@ -20,13 +20,16 @@ class NotificationPreferences extends ChangeNotifier {
 
   static const _keyMessages = 'rasan_notif_messages';
   static const _keyInvites = 'rasan_notif_invites';
+  static const _keyEmergencies = 'rasan_notif_emergencies';
 
   bool _messagesEnabled = true;
   bool _invitesEnabled = true;
+  bool _emergenciesEnabled = true;
   bool _loaded = false;
 
   bool get messagesEnabled => _messagesEnabled;
   bool get invitesEnabled => _invitesEnabled;
+  bool get emergenciesEnabled => _emergenciesEnabled;
   bool get loaded => _loaded;
 
   /// قراءة التفضيلات المحلية ثم مزامنتها مع الخادم إن وُجدت جلسة.
@@ -34,6 +37,7 @@ class NotificationPreferences extends ChangeNotifier {
     final sp = await SharedPreferences.getInstance();
     _messagesEnabled = sp.getBool(_keyMessages) ?? true;
     _invitesEnabled = sp.getBool(_keyInvites) ?? true;
+    _emergenciesEnabled = sp.getBool(_keyEmergencies) ?? true;
     _loaded = true;
     notifyListeners();
 
@@ -42,9 +46,11 @@ class NotificationPreferences extends ChangeNotifier {
     if (remote != null) {
       final m = remote['messages'] ?? _messagesEnabled;
       final i = remote['invites'] ?? _invitesEnabled;
-      if (m != _messagesEnabled || i != _invitesEnabled) {
+      final e = remote['emergencies'] ?? _emergenciesEnabled;
+      if (m != _messagesEnabled || i != _invitesEnabled || e != _emergenciesEnabled) {
         _messagesEnabled = m;
         _invitesEnabled = i;
+        _emergenciesEnabled = e;
         notifyListeners();
         await _cacheLocal();
       }
@@ -67,12 +73,21 @@ class NotificationPreferences extends ChangeNotifier {
     await _persist();
   }
 
+  /// تشغيل/إيقاف إشعارات إنذارات الطوارئ.
+  Future<void> setEmergencies(bool enabled) async {
+    if (enabled == _emergenciesEnabled) return;
+    _emergenciesEnabled = enabled;
+    notifyListeners();
+    await _persist();
+  }
+
   /// حفظ محلي + مزامنة مع الخادم (فشل الشبكة لا يمنع الحفظ المحلي).
   Future<void> _persist() async {
     await _cacheLocal();
     await _api.savePreferences(
       messages: _messagesEnabled,
       invites: _invitesEnabled,
+      emergencies: _emergenciesEnabled,
     );
   }
 
@@ -80,5 +95,6 @@ class NotificationPreferences extends ChangeNotifier {
     final sp = await SharedPreferences.getInstance();
     await sp.setBool(_keyMessages, _messagesEnabled);
     await sp.setBool(_keyInvites, _invitesEnabled);
+    await sp.setBool(_keyEmergencies, _emergenciesEnabled);
   }
 }

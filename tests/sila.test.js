@@ -92,3 +92,31 @@ describe('provenance and hygiene of the merged sila module', () => {
     }
   });
 });
+
+// ===== ساحات صلة الحية — ربط الغرف بالخادم وعدّاد عقد حقيقي =====
+describe('sila rooms are wired to the server transport', () => {
+  it('netBridge can join additional rooms (join guards disconnected state)', () => {
+    const bridge = read('sila/src/services/netBridge.js');
+    expect(bridge).toMatch(/join\(room\)/);
+    expect(bridge).toMatch(/if \(!this\.connected \|\| !room \|\| room === this\.room\) return false/);
+    expect(bridge).toMatch(/emit\("sila:join",\s*\{\s*room\s*\}\)/);
+  });
+
+  it('room switch joins via the server and refreshes real peer counts', () => {
+    const main = read('sila/src/main.js');
+    expect(main).toMatch(/eventHandlers\.onRoomChange/);
+    expect(main).toMatch(/netBridge\.join\(roomName\)/);
+    expect(main).toMatch(/refreshSilaCounts/);
+    expect(main).toMatch(/peersCount\(state\.activeRoom\)/);
+  });
+
+  it('room counts come from the server (sila:peers), not static numbers', () => {
+    const appState = read('sila/src/state/appState.js');
+    expect(appState).toMatch(/setRoomCount/);
+  });
+
+  it('keeps a periodic presence pulse so counts stay alive', () => {
+    const main = read('sila/src/main.js');
+    expect(main).toMatch(/setInterval/);
+  });
+});

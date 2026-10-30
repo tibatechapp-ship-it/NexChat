@@ -1,5 +1,5 @@
 import "./style.css";
-import { state, addMessage, addPeer } from "./state/appState.js";
+import { state, addMessage, addPeer, setActiveRoom, setRoomCount } from "./state/appState.js";
 import { MeshService } from "./services/meshService.js";
 import { NetBridge } from "./services/netBridge.js";
 import { generateNodeId, formatTime } from "./utils/helpers.js";
@@ -25,9 +25,33 @@ netBridge.onPresence((data) => {
 netBridge.onStateChange((connected) => {
   // عند توفر نقل الخادم نعرضه كوسيلة فعلية — الواجهة الهجينة Mesh/Net مكتملة
   state.online = connected || navigator.onLine;
+  if (connected) refreshSilaCounts();
   renderApp();
 });
 netBridge.connect();
+
+// ===== ساحات صلة الحية =====
+// الغرف الحقيقية عبر الخادم: تبديل الساحة ينضم عبر sila:join، والعدّادات
+// تأتي من sila:peers بدل الأرقام الثابتة. بلا اتصال يبقى عدّاد BroadcastChannel.
+function refreshSilaCounts() {
+  netBridge.peersCount(state.activeRoom).then((count) => {
+    if (count > 0) { setRoomCount(state.activeRoom, count); renderApp(); }
+  });
+}
+
+// معالج تبديل الساحة — انضمام حقيقي عبر الخادم + تحديث العدّاد
+eventHandlers.onRoomChange = (roomName) => {
+  setActiveRoom(roomName);
+  netBridge.join(roomName); // لا شيء بلا اتصال — BroadcastChannel ساحة واحدة محلياً
+  refreshSilaCounts();
+  renderApp();
+};
+
+// نبض حضور دوري: يبقى عدّاد العقد والساحات حياً دون تدخل المستخدم
+setInterval(() => {
+  meshService.announcePresence();
+  if (netBridge.connected) { netBridge.announce(); refreshSilaCounts(); }
+}, 30000);
 
 // معالجة الرسائل الواردة
 meshService.onMessage((data) => {

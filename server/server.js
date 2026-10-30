@@ -99,7 +99,7 @@ io.on("connection", (socket) => {
 
   socket.on("message", (payload) => {
     if (!checkSocketRate(socket)) return;
-    const { conversationId, ciphertext, iv, type, ephemeral_ttl, key_version, attachmentId } = payload || {};
+    const { conversationId, ciphertext, iv, type, ephemeral_ttl, key_version, attachmentId, clientId } = payload || {};
     if (!conversationId || !ciphertext || !iv) return;
 
     const m = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(conversationId, uid);
@@ -127,7 +127,14 @@ io.on("connection", (socket) => {
     const time = Date.now();
     const info = db.prepare("INSERT INTO messages (conversation_id, sender_id, type, ciphertext, iv, ephemeral_ttl, time, key_version, attachment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(conversationId, uid, type || "text", ciphertext, iv, ephemeral_ttl || 0, time, key_version || 1, attachmentId || null);
     const msg = { id: info.lastInsertRowid, conversationId, senderId: uid, senderName: socket.user.username, type: type || "text", ciphertext, iv, time, ephemeral_ttl: ephemeral_ttl || 0, key_version: key_version || 1, attachmentId: attachmentId || null };
+    // clientId: معرّف يوضعه العميل لرسائل طابور الأوفلاين (≤ 64 حرفاً) — يمرّ
+    // مع البث كي يستبدل العميل نسخته المتفائلة بالنسخة الرسمية دون تكرار.
+    if (typeof clientId === "string" && clientId.length > 0 && clientId.length <= 64) {
+      msg.clientId = clientId;
+    }
     io.to("conv:" + conversationId).emit("message", msg);
+    // إقرار للمرسل: الرسالة حُفظت على الخادم وأُرسلت للغرفة (مؤشر ✓ في الواجهة).
+    if (msg.clientId) socket.emit("message:ack", { clientId: msg.clientId, id: msg.id, time });
 
     // Push for offline members
     const members = db.prepare("SELECT user_id FROM conversation_members WHERE conversation_id = ? AND user_id != ?").all(conversationId, uid);
@@ -308,6 +315,51 @@ app.get("/api/conversations/:id/key-state", authRequired, (req, res) => {
   const conv = db.prepare("SELECT current_key_version FROM conversations WHERE id = ?").get(req.params.id);
   const mine = db.prepare("SELECT key_version FROM group_keys WHERE conversation_id = ? AND user_id = ?").get(req.params.id, req.user.id);
   res.json({ current: conv?.current_key_version || 1, mine: mine?.key_version || 0, up_to_date: (mine?.key_version || 0) === (conv?.current_key_version || 1) });
+});
+
+// ===== Emergency alert (إنذار الطوارئ) =====
+// زر بث جماعي على غرار Zello: عضو يطلق إنذاراً في محادثة → حدث Socket فوري
+// لكل من في الغرفة + إشعار FCM بالقالب الثابت لكل عضو غير متصل.
+// الإساءة مقهومة: إنذار واحد لكل مستخدم لكل محادثة كل 60 ثانية.
+// نص الإشعار من القالب فقط (notifications.TEMPLATES.emergency) — بلا أي محتوى.
+const EMERGENCY_COOLDOWN_MS = 60 * 1000;
+const lastEmergency = new Map(); // key: `${userId}:${conversationId}` -> timestamp
+
+function emergencyKey(userId, conversationId) { return `${userId}:${conversationId}`; }
+
+app.post("/api/conversations/:id/emergency", authRequired, (req, res) => {
+  const convId = Number(req.params.id);
+  if (!Number.isInteger(convId)) return res.status(400).json({ error: "bad conversation id" });
+  const m = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(convId, req.user.id);
+  if (!m) return res.status(403).json({ error: "not a member" });
+  const conv = db.prepare("SELECT id, type FROM conversations WHERE id = ?").get(convId);
+  if (!conv) return res.status(404).json({ error: "conversation not found" });
+
+  const key = emergencyKey(req.user.id, convId);
+  const now = Date.now();
+  const last = lastEmergency.get(key) || 0;
+  if (now - last < EMERGENCY_COOLDOWN_MS) {
+    return res.status(429).json({ error: "cooldown", retry_after_ms: EMERGENCY_COOLDOWN_MS - (now - last) });
+  }
+  lastEmergency.set(key, now);
+
+  const at = now;
+  io.to("conv:" + convId).emit("emergency", { conversationId: convId, by: req.user.id, byName: req.user.username, at });
+
+  // إشعار FCM لكل عضو غير متصل — يحترم تفضيلات الطوارئ لكل مستخدم
+  const members = db.prepare("SELECT user_id FROM conversation_members WHERE conversation_id = ? AND user_id != ?").all(convId, req.user.id);
+  const onlineIds = new Set();
+  for (const [sid, sock] of io.sockets.sockets) {
+    if (sock.user && members.some((mm) => mm.user_id === sock.user.id)) onlineIds.add(sock.user.id);
+  }
+  let notified = 0;
+  for (const mm of members) {
+    if (onlineIds.has(mm.user_id)) continue; // المتصلون بالغرفة استلموا حدث Socket
+    if (!notifications.canPush(mm.user_id, "emergency")) continue;
+    notifications.notifyUser(mm.user_id, "emergency", { conversationId: convId });
+    notified++;
+  }
+  res.json({ ok: true, at, notified });
 });
 
 // ===== Stories =====

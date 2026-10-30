@@ -52,6 +52,7 @@
     <button id="back" class="icon hidden" aria-label="رجوع" title="رجوع">←</button>
     <h2 id="title">رسن</h2>
     <div class="actions">
+      <button id="emergency-btn" class="icon emergency hidden" aria-label="إنذار طوارئ" title="إنذار طوارئ">🚨</button>
       <button id="rotate-key" class="icon hidden" aria-label="تدوير مفتاح المجموعة" title="تدوير مفتاح المجموعة">🔄</button>
       <button id="new-chat" class="icon" aria-label="محادثة جديدة" title="محادثة جديدة">+</button>
       <button id="new-group" class="icon" aria-label="مجموعة جديدة" title="مجموعة">👥</button>
@@ -61,14 +62,27 @@
   </header>
   <section id="list" class="list"></section>
   <section id="chat" class="chat hidden">
+    <div id="emergency-banner" class="emergency-banner hidden" role="alert" aria-live="assertive">
+      <span>🚨</span>
+      <b id="emergency-text">إنذار طوارئ</b>
+      <button id="emergency-dismiss" class="icon" aria-label="إخفاء التنبيه">✕</button>
+    </div>
     <div id="security-banner" class="security-banner hidden" role="status" aria-live="polite"></div>
     <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
     <p id="typing" class="typing" aria-live="polite"></p>
+    <div id="recording-bar" class="recording-bar hidden" role="status" aria-live="polite">
+      <span class="rec-dot" aria-hidden="true"></span>
+      <b id="rec-timer">0:00</b>
+      <small id="rec-hint">جارٍ التسجيل...</small>
+      <button type="button" id="rec-cancel" class="icon" aria-label="إلغاء التسجيل">✕</button>
+      <button type="button" id="rec-send" class="send" aria-label="إرسال المذكرة الصوتية">➤</button>
+    </div>
     <form id="send-form" class="composer">
       <label class="sr-only" for="msg-input" data-i18n="messagePh">اكتب رسالة...</label>
       <input id="msg-input" data-i18n-placeholder="messagePh" placeholder="اكتب رسالة..." autocomplete="off" />
       <input type="file" id="file-input" hidden aria-hidden="true" />
       <button type="button" id="attach" class="icon" aria-label="إرفاق ملف" title="إرفاق">📎</button>
+      <button type="button" id="mic" class="icon" aria-label="مذكرة صوتية" title="مذكرة صوتية">🎤</button>
       <button type="submit" id="send-btn" class="send" aria-label="إرسال" title="إرسال">➤</button>
     </form>
   </section>

@@ -61,3 +61,9 @@ export function addPeer(peerId, timestamp) {
 export function getPeerCount() {
   return Math.max(2, state.peers.size + 1);
 }
+
+/** تحديث عدّاد ساحة من مصدر حقيقي (الخادم عبر sila:peers). */
+export function setRoomCount(roomName, count) {
+  const room = rooms.find((r) => r.name === roomName);
+  if (room && Number.isInteger(count) && count > 0) room.count = count;
+}

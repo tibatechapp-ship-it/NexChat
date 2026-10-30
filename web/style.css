@@ -168,3 +168,22 @@ header h2{font-size:1.0625rem;color:var(--text);font-weight:600}
   *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
   .send:hover{transform:none}
 }
+
+/* ===== إنذار الطوارئ (Zello-style broadcast alert) ===== */
+#emergency-btn.emergency{color:#d93025}
+#emergency-btn.emergency:hover{background:#fdecea}
+.emergency-banner{display:flex;align-items:center;gap:10px;background:#d93025;color:#fff;padding:10px 14px;border-radius:10px;margin:0 12px 8px;font-size:0.9375rem;box-shadow:0 2px 8px rgba(217,48,37,.35)}
+.emergency-banner b{flex:1}
+.emergency-banner .icon{color:#fff;background:transparent;border:none;cursor:pointer;font-size:1rem;padding:4px}
+
+/* ===== مؤشرات التسليم (طابور الأوفلاين) ===== */
+.msg-status{font-size:0.6875rem;color:var(--muted);margin-inline-start:6px;flex-shrink:0}
+.msg-status[data-status="queued"]{color:#b58900;font-weight:700}
+
+/* ===== شريط التسجيل الصوتي ===== */
+.recording-bar{display:flex;align-items:center;gap:10px;margin:0 12px 10px;padding:10px 14px;background:var(--surface-2);border:1px solid var(--surface-3);border-radius:12px}
+.rec-dot{width:10px;height:10px;border-radius:50%;background:#d93025;animation:recPulse 1s ease-in-out infinite}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+#rec-timer{font-family:ui-monospace,Menlo,monospace;min-width:2.6em}
+#rec-hint{color:var(--muted);flex:1}
+.recording-bar .send{border:none;cursor:pointer}

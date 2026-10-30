@@ -115,33 +115,48 @@ describe('notification payload templates (E2EE guard)', () => {
 });
 
 describe('notification preferences (on/off per kind)', () => {
-  it('defaults are both enabled for a fresh user', () => {
+  it('defaults are all enabled for a fresh user', () => {
     const uid = makeUser();
-    expect(notifications.getPrefs(uid)).toEqual({ messages: true, invites: true });
+    expect(notifications.getPrefs(uid)).toEqual({
+      messages: true,
+      invites: true,
+      emergencies: true,
+    });
     expect(notifications.canPush(uid, 'new_message')).toBe(true);
     expect(notifications.canPush(uid, 'group_invite')).toBe(true);
+    expect(notifications.canPush(uid, 'emergency')).toBe(true);
   });
 
-  it('setPrefs disables messages only — invites stay on', () => {
+  it('setPrefs disables messages only — invites and emergencies stay on', () => {
     const uid = makeUser();
     notifications.setPrefs(uid, { messages: false });
-    expect(notifications.getPrefs(uid)).toEqual({ messages: false, invites: true });
+    expect(notifications.getPrefs(uid)).toEqual({
+      messages: false,
+      invites: true,
+      emergencies: true,
+    });
     expect(notifications.canPush(uid, 'new_message')).toBe(false);
     expect(notifications.canPush(uid, 'group_invite')).toBe(true);
+    expect(notifications.canPush(uid, 'emergency')).toBe(true);
   });
 
-  it('setPrefs disables invites only — messages stay on', () => {
+  it('setPrefs disables invites only — messages and emergencies stay on', () => {
     const uid = makeUser();
     notifications.setPrefs(uid, { invites: false });
     expect(notifications.canPush(uid, 'new_message')).toBe(true);
     expect(notifications.canPush(uid, 'group_invite')).toBe(false);
+    expect(notifications.canPush(uid, 'emergency')).toBe(true);
   });
 
-  it('partial update keeps the other flag untouched', () => {
+  it('partial update keeps the other flags untouched', () => {
     const uid = makeUser();
     notifications.setPrefs(uid, { messages: false });
     notifications.setPrefs(uid, { invites: false }); // لا يُعيد messages للتفعيل
-    expect(notifications.getPrefs(uid)).toEqual({ messages: false, invites: false });
+    expect(notifications.getPrefs(uid)).toEqual({
+      messages: false,
+      invites: false,
+      emergencies: true,
+    });
   });
 
   it('unknown kind is never pushable', () => {
@@ -181,19 +196,19 @@ describe('notifyUser respects preferences and sends sanitized payloads', () => {
   });
 });
 
-describe('REST endpoints (createRouter with injected auth)', () => {
-  // express متاح كـdevDependency (نفس الإصدار ^4 الذي يستخدمه الخادم).
-  // الاستيراد متحول عبر متغير + @vite-ignore حتى لا يحلله vite أثناء
-  // التحويل — إن غاب عن بيئة ما يتراجع القسم بهدوء بدل فشل الملف كاملاً.
-  async function loadExpress() {
-    const name = ['ex', 'press'].join('');
-    try {
-      return (await import(/* @vite-ignore */ name)).default;
-    } catch {
-      return null;
-    }
+// express متاح كـdevDependency (نفس الإصدار ^4 الذي يستخدمه الخادم).
+// الاستيراد متحول عبر متغير + @vite-ignore حتى لا يحلله vite أثناء
+// التحويل — إن غاب عن بيئة ما يتراجع القسم بهدوء بدل فشل الملف كاملاً.
+async function loadExpress() {
+  const name = ['ex', 'press'].join('');
+  try {
+    return (await import(/* @vite-ignore */ name)).default;
+  } catch {
+    return null;
   }
+}
 
+describe('REST endpoints (createRouter with injected auth)', () => {
   it('GET/PUT /api/push/preferences round-trip', async () => {
     const express = await loadExpress();
     if (!express) return; // بيئة بلا express — النواة مغطاة بالاختبارات أعلاه
@@ -212,7 +227,11 @@ describe('REST endpoints (createRouter with injected auth)', () => {
 
     const get1 = await fetch(`${base}/push/preferences`);
     expect(get1.status).toBe(200);
-    expect((await get1.json()).preferences).toEqual({ messages: true, invites: true });
+    expect((await get1.json()).preferences).toEqual({
+      messages: true,
+      invites: true,
+      emergencies: true,
+    });
 
     const put = await fetch(`${base}/push/preferences`, {
       method: 'PUT',
@@ -220,10 +239,18 @@ describe('REST endpoints (createRouter with injected auth)', () => {
       body: JSON.stringify({ messages: false }),
     });
     expect(put.status).toBe(200);
-    expect((await put.json()).preferences).toEqual({ messages: false, invites: true });
+    expect((await put.json()).preferences).toEqual({
+      messages: false,
+      invites: true,
+      emergencies: true,
+    });
 
     const get2 = await fetch(`${base}/push/preferences`);
-    expect((await get2.json()).preferences).toEqual({ messages: false, invites: true });
+    expect((await get2.json()).preferences).toEqual({
+      messages: false,
+      invites: true,
+      emergencies: true,
+    });
 
     // تحقق صحة الإدخال
     const bad = await fetch(`${base}/push/preferences`, {
@@ -306,6 +333,130 @@ describe('REST endpoints (createRouter with injected auth)', () => {
     });
     expect((await muted.json()).delivered).toBe(false);
     expect(sent).toHaveLength(1); // لم يزد
+
+    server.close();
+    notifications.setPushSender(null);
+  });
+});
+
+// ===== إنذارات الطوارئ (emergency) — من بحث الميزات (Zello نموذجاً) =====
+describe('emergency alerts', () => {
+  it('emergency uses the fixed template — caller content is dropped (E2EE guard)', () => {
+    const p = notifications.buildNotificationPayload('emergency', {
+      conversationId: 7,
+      title: 'مزروع',
+      body: 'محتوى سرّي مزروع',
+      senderName: 'اسم مزروع',
+    });
+    expect(p.title).toBe('رسن');
+    expect(p.body).toContain('طوارئ');
+    expect(JSON.stringify(p)).not.toContain('مزروع');
+    expect(p.data).toEqual({ kind: 'emergency', conversationId: '7' });
+  });
+
+  it('emergencies preference defaults on, gates canPush, and is isolated from other kinds', () => {
+    const uid = makeUser();
+    expect(notifications.getPrefs(uid)).toEqual({
+      messages: true,
+      invites: true,
+      emergencies: true,
+    });
+    expect(notifications.canPush(uid, 'emergency')).toBe(true);
+
+    notifications.setPrefs(uid, { emergencies: false });
+    expect(notifications.canPush(uid, 'emergency')).toBe(false);
+    // إيقاف الطوارئ لا يمس أنواع الإشعارات الأخرى
+    expect(notifications.canPush(uid, 'new_message')).toBe(true);
+    expect(notifications.canPush(uid, 'group_invite')).toBe(true);
+
+    // إعادة التشغيل تعمل كذلك
+    notifications.setPrefs(uid, { emergencies: true });
+    expect(notifications.canPush(uid, 'emergency')).toBe(true);
+  });
+
+  it('notifyUser delivers the emergency template when enabled and skips when muted', async () => {
+    const uid = makeUser();
+    const sent = [];
+    notifications.setPushSender(async (userId, payload) => {
+      sent.push({ userId, payload });
+    });
+
+    expect(await notifications.notifyUser(uid, 'emergency', { conversationId: 1 })).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].payload.body).toContain('طوارئ');
+    expect(sent[0].payload.data.kind).toBe('emergency');
+
+    notifications.setPrefs(uid, { emergencies: false });
+    expect(await notifications.notifyUser(uid, 'emergency', { conversationId: 1 })).toBe(false);
+    expect(sent).toHaveLength(1); // لم يزد
+
+    notifications.setPushSender(null);
+  });
+
+  it('REST: PUT /push/preferences accepts emergencies; POST /push/send accepts kind emergency', async () => {
+    const express = await loadExpress();
+    if (!express) return;
+    const alice = makeUser();
+    const bob = makeUser();
+    const cid = makeConversation(alice, [bob]);
+
+    const sent = [];
+    notifications.setPushSender(async (userId, payload) => sent.push({ userId, payload }));
+
+    const router = notifications.createRouter({
+      authRequired: (req, _res, next) => {
+        req.user = { id: alice };
+        next();
+      },
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', router);
+    const server = app.listen(0);
+    const base = `http://127.0.0.1:${server.address().port}/api`;
+
+    // GET يعيد الأنواع الثلاثة
+    const get1 = await fetch(`${base}/push/preferences`);
+    expect((await get1.json()).preferences).toEqual({
+      messages: true,
+      invites: true,
+      emergencies: true,
+    });
+
+    // كتم الطوارئ للمستهدف bob مباشرة (الـPUT يُختبر أعلاه على صاحب الجلسة)
+    notifications.setPrefs(bob, { emergencies: false });
+
+    // إرسال إنذار عبر /push/send — delivered=false لأن bob كتم الطوارئ
+    const send = await fetch(`${base}/push/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        toUserId: bob,
+        kind: 'emergency',
+        conversationId: cid,
+        body: 'محاولة تمرير محتوى',
+      }),
+    });
+    expect(send.status).toBe(200);
+    expect((await send.json()).delivered).toBe(false);
+    expect(sent).toHaveLength(0);
+
+    // قيمة غير منطقية → 400
+    const bad = await fetch(`${base}/push/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emergencies: 'no' }),
+    });
+    expect(bad.status).toBe(400);
+
+    // تحقق إضافي: PUT يقبل emergencies كقيمة منطقية (round-trip على صاحب الجلسة)
+    const putOk = await fetch(`${base}/push/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emergencies: false }),
+    });
+    expect(putOk.status).toBe(200);
+    expect((await putOk.json()).preferences.emergencies).toBe(false);
 
     server.close();
     notifications.setPushSender(null);
