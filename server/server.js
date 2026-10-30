@@ -19,6 +19,8 @@ const groupcalls = require("./groupcalls");
 const loraGateway = require("./lora-gateway");
 // صلة (sila) — مساحة الـ Mesh المحلية المنفصلة (بلا DB ولا مصادقة؛ راجع server/sila-mesh.js)
 const silaMesh = require("./sila-mesh");
+// التفاعلات والحظر والردود (P4 — بحث الميزات): إيموجي/حظر/ردود
+const interactions = require("./interactions");
 
 const app = express();
 const server = http.createServer(app);
@@ -40,6 +42,7 @@ app.use("/api/auth", authRouter);
 app.use("/api", notifications.createRouter({ authRequired }));
 app.use("/api", panic.createRouter({ authRequired, io }));
 app.use("/api", moderation.createRouter({ authRequired, io }));
+app.use("/api", interactions.createRouter({ authRequired, io }));
 
 const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 } });
 
@@ -121,6 +124,29 @@ io.on("connection", (socket) => {
     const conv = db.prepare("SELECT type, current_key_version FROM conversations WHERE id = ?").get(conversationId);
     if (!conv) return;
 
+    // بوابة الحظر في رسائل DM القائمة (P4): حجب ثنائي الاتجاه يصمت المحادثة
+    // القائمة كذلك — الرفض بعقد صريح يعرضه العميل (نمط WhatsApp/Telegram).
+    if (conv.type === "dm") {
+      const other = db.prepare("SELECT user_id FROM conversation_members WHERE conversation_id = ? AND user_id != ?").get(conversationId, uid);
+      if (other && interactions.isBlockedBetween(uid, other.user_id)) {
+        socket.emit("message:rejected", { conversationId, reason: "blocked" });
+        return;
+      }
+    }
+
+    // الردود (P4): مرجع معرّف فقط — النص المقتبس داخل ciphertext العميل (E2EE).
+    // التحقق: الهدف موجود في نفس المحادثة وغير محذوف — وإلا رفض صريح.
+    let replyTo = null;
+    if (payload && payload.replyTo != null) {
+      replyTo = Number(payload.replyTo);
+      if (!Number.isInteger(replyTo)) return;
+      const target = db.prepare("SELECT id, conversation_id, deleted FROM messages WHERE id = ?").get(replyTo);
+      if (!target || target.conversation_id !== conversationId || target.deleted) {
+        socket.emit("message:rejected", { conversationId, reason: "reply_invalid" });
+        return;
+      }
+    }
+
     // القنوات للقراءة فقط (أدوات الإشراف — درس FireChat): النشر للمشرفين
     // والمالك حصرًا؛ الأعضاء يستقبلون ويقرأون. الرفض بعقد صريح يعرفه العميل.
     if (conv.type === "channel") {
@@ -148,8 +174,8 @@ io.on("connection", (socket) => {
     }
 
     const time = Date.now();
-    const info = db.prepare("INSERT INTO messages (conversation_id, sender_id, type, ciphertext, iv, ephemeral_ttl, time, key_version, attachment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(conversationId, uid, type || "text", ciphertext, iv, ephemeral_ttl || 0, time, key_version || 1, attachmentId || null);
-    const msg = { id: info.lastInsertRowid, conversationId, senderId: uid, senderName: socket.user.username, type: type || "text", ciphertext, iv, time, ephemeral_ttl: ephemeral_ttl || 0, key_version: key_version || 1, attachmentId: attachmentId || null };
+    const info = db.prepare("INSERT INTO messages (conversation_id, sender_id, type, ciphertext, iv, ephemeral_ttl, time, key_version, attachment_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(conversationId, uid, type || "text", ciphertext, iv, ephemeral_ttl || 0, time, key_version || 1, attachmentId || null, replyTo);
+    const msg = { id: info.lastInsertRowid, conversationId, senderId: uid, senderName: socket.user.username, type: type || "text", ciphertext, iv, time, ephemeral_ttl: ephemeral_ttl || 0, key_version: key_version || 1, attachmentId: attachmentId || null, replyTo };
     // clientId: معرّف يوضعه العميل لرسائل طابور الأوفلاين (≤ 64 حرفاً) — يمرّ
     // مع البث كي يستبدل العميل نسخته المتفائلة بالنسخة الرسمية دون تكرار.
     if (typeof clientId === "string" && clientId.length > 0 && clientId.length <= 64) {
@@ -304,6 +330,13 @@ app.get("/api/conversations", authRequired, (req, res) => {
 app.post("/api/conversations", authRequired, (req, res) => {
   const { type, name, description, members } = req.body || {};
   if (!["dm", "group", "channel"].includes(type)) return res.status(400).json({ error: "bad type" });
+  // بوابة الحظر (P4): DM جديدة بين طرفين بينهما حجب بأي اتجاه تُرفض 403
+  if (type === "dm") {
+    for (const uname of (members || [])) {
+      const u = db.prepare("SELECT id FROM users WHERE username = ?").get(uname);
+      if (u && interactions.isBlockedBetween(req.user.id, u.id)) return res.status(403).json({ error: "blocked" });
+    }
+  }
   const info = db.prepare("INSERT INTO conversations (type, name, description, owner_id, created_at) VALUES (?, ?, ?, ?, ?)").run(type, name || null, description || null, req.user.id, Date.now());
   const cid = info.lastInsertRowid;
   const addMember = db.prepare("INSERT INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)");
@@ -340,6 +373,10 @@ app.post("/api/conversations/:id/members", authRequired, (req, res) => {
   if (!target.public_key) return res.status(400).json({ error: "target has no public key" });
   // أدوات الإشراف: المحظور لا يُعاد إضافته — 403 صريح يعرضه العميل كحظر
   if (moderation.isBanned(Number(req.params.id), target.id)) return res.status(403).json({ error: "banned" });
+  // بوابة الحظر الشخصي (P4 — نمط Telegram): من حظرني لا أضيفه للمجموعات،
+  // ومن حظرته أنا لا يُضاف من حسابي — رسالتان منفصلتان لأداء واضح.
+  if (interactions.hasBlocked(target.id, req.user.id)) return res.status(403).json({ error: "blocked_by_user" });
+  if (interactions.hasBlocked(req.user.id, target.id)) return res.status(403).json({ error: "you_blocked_user" });
   const exists = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(req.params.id, target.id);
   if (exists) return res.status(409).json({ error: "already a member" });
   db.prepare("INSERT INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)").run(req.params.id, target.id, Date.now());
@@ -362,8 +399,9 @@ app.delete("/api/conversations/:id/members/:userId", authRequired, (req, res) =>
 app.get("/api/conversations/:id/messages", authRequired, (req, res) => {
   const m = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(req.params.id, req.user.id);
   if (!m) return res.status(403).json({ error: "forbidden" });
-  const rows = db.prepare(`SELECT m.id, m.conversation_id AS conversationId, m.sender_id AS senderId, u.username AS senderName, m.type, m.ciphertext, m.iv, m.ephemeral_ttl, m.time, m.key_version, m.attachment_id AS attachmentId, m.deleted, m.edited_at FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted = 0 ORDER BY m.time DESC LIMIT 100`).all(req.params.id).reverse();
-  res.json({ messages: rows });
+  const rows = db.prepare(`SELECT m.id, m.conversation_id AS conversationId, m.sender_id AS senderId, u.username AS senderName, m.type, m.ciphertext, m.iv, m.ephemeral_ttl, m.time, m.key_version, m.attachment_id AS attachmentId, m.deleted, m.edited_at, m.reply_to_id AS replyTo FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted = 0 ORDER BY m.time DESC LIMIT 100`).all(req.params.id).reverse();
+  // تفاعلات الرسائل (P4) مجمّعة لصفحة الرسائل الحالية — ميتاداتا فقط بلا محتوى
+  res.json({ messages: interactions.attachReactions(rows) });
 });
 
 // ===== Group key =====

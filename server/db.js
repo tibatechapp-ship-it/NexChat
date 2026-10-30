@@ -111,6 +111,38 @@ CREATE TABLE IF NOT EXISTS conversation_bans (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (conversation_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS message_reactions (
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_msg ON message_reactions(message_id);
+CREATE TABLE IF NOT EXISTS blocked_users (
+  blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (blocker_id, blocked_id)
+);
+CREATE INDEX IF NOT EXISTS idx_blocked_target ON blocked_users(blocked_id);
+`);
+
+// تنظيف تلقائي لتفاعلات الرسائل عند حذفها — يعمل على كل مسارات الحذف القائمة
+// (الرسائل المتلاشية، حذف المرسل عبر socket، الحذف الإشرافي الناعم deleted=1)
+// بلا تعديل أي سطر منها: الزناد يلتقط DELETE الصريح وUPDATE الحذف الناعم معاً.
+db.exec(`
+CREATE TRIGGER IF NOT EXISTS trg_msg_reactions_on_delete
+AFTER DELETE ON messages
+BEGIN
+  DELETE FROM message_reactions WHERE message_id = OLD.id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_msg_reactions_on_softdelete
+AFTER UPDATE OF deleted ON messages
+WHEN NEW.deleted = 1
+BEGIN
+  DELETE FROM message_reactions WHERE message_id = NEW.id;
+END;
 `);
 
 // ترحيلات تدريجية — ALTER TABLE يفشل إن وُجد العمود فعلًا (قاعدة قائمة) فنهمشه.
@@ -118,6 +150,13 @@ CREATE TABLE IF NOT EXISTS conversation_bans (
 // في docs/FEATURE_RESEARCH.md §6: قنوات بلا إشراف لا تدوم).
 try {
   db.exec("ALTER TABLE conversations ADD COLUMN pinned_message_id INTEGER");
+} catch (e) {
+  if (!String(e.message).includes("duplicate column name")) throw e;
+}
+// reply_to_id: الردود — مرجع معرّف الرسالة الأصل فقط (E2EE: النص المقتبس
+// يبقى داخل ciphertext العميل ولا يراه الخادم إطلاقاً).
+try {
+  db.exec("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER");
 } catch (e) {
   if (!String(e.message).includes("duplicate column name")) throw e;
 }

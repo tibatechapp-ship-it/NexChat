@@ -63,6 +63,8 @@
       <button id="new-chat" class="icon" aria-label="محادثة جديدة" title="محادثة جديدة">+</button>
       <button id="new-group" class="icon" aria-label="مجموعة جديدة" title="مجموعة">👥</button>
       <button id="stories-btn" class="icon" aria-label="ستوري" title="ستوري">◉</button>
+      <!-- المحفوظات (P4 — نمط Telegram): قائمة الرسائل المحفوظة محلياً على الجهاز -->
+      <button id="starred-btn" class="icon" aria-label="المحفوظات" title="المحفوظات">⭐</button>
       <button id="lock-btn" class="icon" aria-label="القفل والمسح" title="القفل والمسح">🔒</button>
       <button id="logout" class="icon" aria-label="تسجيل الخروج" title="خروج">⎋</button>
     </div>
@@ -75,6 +77,12 @@
       <button id="emergency-dismiss" class="icon" aria-label="إخفاء التنبيه">✕</button>
     </div>
     <div id="security-banner" class="security-banner hidden" role="status" aria-live="polite"></div>
+    <!-- البحث المحلي (P4 — نمط Signal/Telegram): يبحث في النصوص المفكوكة محلياً فقط -->
+    <div id="search-bar" class="search-bar">
+      <label class="sr-only" for="search-input" data-i18n-placeholder="searchPh">ابحث...</label>
+      <input id="search-input" data-i18n-placeholder="searchPh" placeholder="ابحث في هذه المحادثة..." autocomplete="off" />
+      <span id="search-count" class="search-count" aria-live="polite"></span>
+    </div>
     <!-- لافتة الرسالة المثبّتة (أدوات الإشراف) — النص مشفّر E2EE فيُفك عند فتح المحادثة -->
     <div id="pinned-banner" class="pinned-banner hidden" role="status">
       <span aria-hidden="true">📌</span>
@@ -91,11 +99,19 @@
       <button type="button" id="rec-cancel" class="icon" aria-label="إلغاء التسجيل">✕</button>
       <button type="button" id="rec-send" class="send" aria-label="إرسال المذكرة الصوتية">➤</button>
     </div>
+    <!-- شريط الرد (P4): معاينة الرسالة المقتبسة + إلغاء — يظهر عند اختيار رد -->
+    <div id="reply-bar" class="reply-bar hidden" role="status">
+      <span class="reply-icon" aria-hidden="true">↩</span>
+      <span id="reply-preview"></span>
+      <button type="button" id="reply-cancel" class="icon" aria-label="إلغاء الرد">✕</button>
+    </div>
     <form id="send-form" class="composer">
       <label class="sr-only" for="msg-input" data-i18n="messagePh">اكتب رسالة...</label>
       <input id="msg-input" data-i18n-placeholder="messagePh" placeholder="اكتب رسالة..." autocomplete="off" />
       <input type="file" id="file-input" hidden aria-hidden="true" />
       <button type="button" id="attach" class="icon" aria-label="إرفاق ملف" title="إرفاق">📎</button>
+      <!-- مشاركة الموقع (P4 — نمط Meshtastic GPS): إحداثيات مشفرة E2EE -->
+      <button type="button" id="loc-btn" class="icon" aria-label="مشاركة الموقع" title="مشاركة الموقع">📍</button>
       <button type="button" id="mic" class="icon" aria-label="مذكرة صوتية" title="مذكرة صوتية">🎤</button>
       <!-- وضع للّكة (PTT — نمط Zello/WhatsApp Walkie-Talkie): استمرار الضغط للتحدث -->
       <button type="button" id="ptt-toggle" class="icon" aria-label="وضع للّكة" aria-pressed="false" title="وضع للّكة (PTT)">🗣</button>
@@ -274,6 +290,17 @@
     </div>
 
     <button id="panic-close" class="btn-secondary">إغلاق</button>
+  </div>
+</section>
+
+<!-- Starred modal — المحفوظات (P4 — نمط Telegram): محلية على الجهاز (E2EE آمنة) -->
+<section id="starred-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="starred-title">
+  <div class="modal-card">
+    <h3 id="starred-title" data-i18n="starredTitle">⭐ المحفوظات</h3>
+    <ul id="starred-list" class="members-list"></ul>
+    <div class="modal-actions">
+      <button id="close-starred" class="btn-secondary" data-i18n="close">إغلاق</button>
+    </div>
   </div>
 </section>
 

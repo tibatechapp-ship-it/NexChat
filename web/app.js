@@ -6,7 +6,35 @@ const state = {
   convs: [], activeConv: null, activeKey: null, activeKeyVersion: 1,
   locale: localStorage.getItem("rasan_locale") || "ar",
   outbox: [], // رسائل مؤجلة لغياب الاتصال — تُمسح عند العودة (طابور أوفلاين)
+  // P4 — التفاعل والمراسلة: ذاكرة النصوص المفكوكة (للردود والبحث — محلية فقط
+  // لا تخرج عن الجهاز)، تفاعلات لكل رسالة، الرد الجاري، المحفوظات والأرشيف.
+  _msgCache: new Map(),   // mid -> { text, senderName, time, type }
+  _reactions: new Map(),  // mid -> [{ emoji, userId }]
+  replyTo: null,          // { id, text, senderName } — الرد الجاري
+  starred: JSON.parse(localStorage.getItem("rasan_starred") || "[]"),
+  archived: JSON.parse(localStorage.getItem("rasan_archived") || "[]"),
+  showArchived: false,
+  searchQuery: "",
 };
+
+// ===== P4: مخازن محلية (محفوظات/أرشيف) — E2EE آمنة: النص المفكوك يبقى على الجهاز
+function saveStarred() { try { localStorage.setItem("rasan_starred", JSON.stringify(state.starred)); } catch {} }
+function saveArchived() { try { localStorage.setItem("rasan_archived", JSON.stringify(state.archived)); } catch {} }
+function isStarred(mid) { return state.starred.some((s) => s.mid === mid); }
+function toggleStar(m) {
+  const idx = state.starred.findIndex((s) => s.mid === m.id);
+  if (idx >= 0) state.starred.splice(idx, 1);
+  else state.starred.push({ convId: m.conversationId || state.activeConv?.id, mid: m.id, text: m.text || "", senderName: m.senderName || "", time: m.time || Date.now() });
+  saveStarred();
+}
+function isArchived(cid) { return state.archived.includes(cid); }
+function toggleArchive(cid) {
+  const idx = state.archived.indexOf(cid);
+  if (idx >= 0) state.archived.splice(idx, 1); else state.archived.push(cid);
+  saveArchived(); renderList();
+}
+// قائمة تفاعلات ثابتة مطابقة لقائمة الخادم (interactions.ALLOWED_REACTIONS)
+const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡", "🔥", "✅"];
 
 // ===== طابور الأوفلاين =====
 // عند انقطاع الاتصال تُحفظ الرسائل المشفّرة محلياً (localStorage) وتُعرض
@@ -272,6 +300,7 @@ async function enterApp() {
   if (!state.myKeys) state.myKeys = await idbGet("myKeypair");
   connectSocket();
   await loadConversations();
+  loadBlocks(); // قائمة حظري (P4) — فشلها لا يعطل الدخول (أزرار الحظر تعرض الحالة الافتراضية)
 }
 
 function loadScript(src) {
@@ -319,6 +348,17 @@ async function connectSocket() {
   state.socket.on("message:deleted", ({ id }) => {
     const el = document.querySelector(`[data-mid="${id}"]`);
     if (el) { el.style.transition = "opacity .3s"; el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }
+    // تنظيف الذاكرة المحلية (P4): النص المفكوك والتفاعلات والمحفوظات — بلا أثر
+    state._msgCache.delete(id);
+    state._reactions.delete(id);
+    const si = state.starred.findIndex((s) => s.mid === id);
+    if (si >= 0) { state.starred.splice(si, 1); saveStarred(); }
+    if (state.replyTo?.id === id) { state.replyTo = null; updateReplyBar(); }
+  });
+  // تفاعل حي (P4): أحدّث لاصقات الرسالة فوراً بلا إعادة جلب
+  state.socket.on("message:reaction", ({ conversationId, messageId, userId, emoji }) => {
+    if (state.activeConv?.id !== conversationId) return;
+    applyReactionUpdate({ messageId, userId, emoji });
   });
   state.socket.on("message:edited", async ({ id, ciphertext, iv, edited_at }) => {
     const el = document.querySelector(`[data-mid="${id}"]`);
@@ -384,6 +424,14 @@ async function connectSocket() {
     } else if (reason === "channel_readonly") {
       // القنوات للقراءة فقط — النشر للمشرفين/المالك (أدوات الإشراف)
       showToast(t("channelReadonly"), "error");
+    } else if (reason === "blocked") {
+      // حظر ثنائي الاتجاه (P4): رسائل DM القائمة تصمت مع إشعار واضح
+      showToast(t("blockedToast"), "error");
+    } else if (reason === "reply_invalid") {
+      // الرد على رسالة محذوفة أو من محادثة أخرى — يُرفض صراحةً
+      showToast(t("replyInvalidToast"), "error");
+      state.replyTo = null;
+      updateReplyBar();
     }
   });
 
@@ -428,8 +476,21 @@ async function loadConversations() {
 function renderList() {
   const list = $("list");
   list.innerHTML = "";
-  if (!state.convs.length) { list.innerHTML = `<p class="empty">${I18N[state.locale].noMessages}</p>`; return; }
-  for (const c of state.convs) {
+  // الأرشيف (P4 — نمط Telegram/WhatsApp): مبدّل يعرض المحادثات المؤرشفة بدل الرئيسية
+  const archiveBar = document.createElement("div");
+  archiveBar.className = "archive-bar";
+  const archiveBtn = document.createElement("button");
+  archiveBtn.type = "button";
+  archiveBtn.className = "archive-toggle" + (state.showArchived ? " active" : "");
+  archiveBtn.setAttribute("aria-pressed", String(state.showArchived));
+  archiveBtn.textContent = `📦 ${t("archivedChats")} (${state.archived.length})`;
+  archiveBtn.onclick = () => { state.showArchived = !state.showArchived; renderList(); };
+  archiveBar.appendChild(archiveBtn);
+  list.appendChild(archiveBar);
+
+  const visible = state.convs.filter((c) => (state.showArchived ? isArchived(c.id) : !isArchived(c.id)));
+  if (!visible.length) { list.innerHTML += `<p class="empty">${I18N[state.locale].noMessages}</p>`; return; }
+  for (const c of visible) {
     const el = document.createElement("div");
     el.className = "conv";
     el.dataset.cid = c.id;
@@ -442,20 +503,50 @@ function renderList() {
     el.setAttribute("aria-label", name);
     el.addEventListener("click", () => openConversation(c));
     el.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openConversation(c); } });
+    // قائمة سياق للأرشفة/إلغاء الأرشفة (يمين الفأرة، أو ضغط طويل — نفس عقد قائمة الرسائل)
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); showConvMenu(c, el); });
+    let at = null;
+    el.addEventListener("touchstart", () => { at = setTimeout(() => showConvMenu(c, el), 600); });
+    el.addEventListener("touchend", () => clearTimeout(at));
+    el.addEventListener("touchmove", () => clearTimeout(at));
     list.appendChild(el);
   }
+}
+
+// قائمة المحادثة: أرشفة/إلغاء أرشفة (P4) — إخفاء بدون حذف
+function showConvMenu(c, el) {
+  const menu = document.createElement("div");
+  menu.className = "msg-menu";
+  menu.dataset.msgMenu = "1";
+  menu.setAttribute("role", "menu");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "msg-menu-item";
+  btn.textContent = isArchived(c.id) ? `↩ ${t("unarchiveChat")}` : `📦 ${t("archiveChat")}`;
+  btn.onclick = () => { menu.remove(); toggleArchive(c.id); };
+  menu.appendChild(btn);
+  const rect = el.getBoundingClientRect();
+  menu.style.top = Math.min(rect.top, window.innerHeight - 90) + "px";
+  menu.style.insetInlineStart = "16px";
+  document.body.appendChild(menu);
+  btn.focus();
+  setTimeout(() => document.addEventListener("click", closeMsgMenu, { once: true }), 0);
 }
 
 async function openConversation(conv) {
   state.activeConv = conv;
   conv._unread = 0;
   state.activeKeyVersion = 1;
+  state.replyTo = null; // لا رد معلّق عبر تبديل المحادثة
+  updateReplyBar();
   $("list").classList.add("hidden");
   $("chat").classList.remove("hidden");
   $("back").classList.remove("hidden");
   $("title").textContent = conv.name || "DM";
   $("messages").innerHTML = "";
   $("typing").textContent = "";
+  $("search-input").value = "";
+  state.searchQuery = "";
   $("emergency-banner").classList.add("hidden");
   // زر الطوارئ متاح للمجموعات والقنوات (بث جماعي كما في Zello) — لا للخاص
   $("emergency-btn").classList.toggle("hidden", !(conv.type === "group" || conv.type === "channel"));
@@ -534,7 +625,50 @@ function appendMessage(m) {
   const edited = document.createElement("em"); edited.className = "edited"; edited.textContent = m.edited_at ? t("edited") : "";
   const small = document.createElement("small"); small.textContent = new Date(m.time).toLocaleTimeString(state.locale, { hour: "2-digit", minute: "2-digit" });
 
-  div.append(b, span, edited, small);
+  div.append(b);
+
+  // ذاكرة النصوص المفكوكة (P4): للردود والبحث والمحفوظات — محلية فقط
+  if (m.id != null) state._msgCache.set(m.id, { text: m.text || "", senderName: m.senderName || "", time: m.time || 0, type: m.type || "text", conversationId: m.conversationId });
+  if (m.reactions) state._reactions.set(m.id, m.reactions);
+
+  // اقتباس الرد (P4): مرجع المعرف من الخادم + النص من الذاكرة المحلية (E2EE)
+  if (m.replyTo != null) {
+    const quote = document.createElement("blockquote");
+    quote.className = "reply-quote";
+    quote.dataset.replyTo = m.replyTo;
+    const cached = state._msgCache.get(m.replyTo);
+    const qName = document.createElement("b"); qName.textContent = cached?.senderName || "";
+    const qText = document.createElement("span"); qText.textContent = cached?.text || t("quoteUnavailable");
+    quote.append(qName, qText);
+    quote.tabIndex = 0;
+    quote.setAttribute("role", "link");
+    quote.setAttribute("aria-label", t("replyTo"));
+    const jump = () => document.querySelector(`[data-mid="${m.replyTo}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    quote.addEventListener("click", jump);
+    quote.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(); } });
+    div.appendChild(quote);
+  }
+
+  // مشاركة الموقع (P4 — نمط Meshtastic GPS): رقاقة 📍 + رابط OpenStreetMap —
+  // بلا تحميل بلاطات من طرف ثالث (الخصوصية: لا أي طلب خارجي). الإحداثيات
+  // مشفّرة E2EE في ciphertext الرسالة — الخادم لا يراها.
+  if (m.type === "location") {
+    try {
+      const loc = JSON.parse(m.text);
+      const chip = document.createElement("a");
+      chip.className = "location-chip";
+      chip.href = `https://www.openstreetmap.org/?mlat=${encodeURIComponent(loc.lat)}&mlon=${encodeURIComponent(loc.lng)}#map=16/${encodeURIComponent(loc.lat)}/${encodeURIComponent(loc.lng)}`;
+      chip.target = "_blank";
+      chip.rel = "noopener noreferrer";
+      chip.textContent = `📍 ${t("locationMsg")} (${Number(loc.lat).toFixed(5)}, ${Number(loc.lng).toFixed(5)})`;
+      span.replaceWith(chip);
+    } catch { span.textContent = "📍"; }
+  }
+
+  div.append(span, edited, small);
+
+  // لاصقة التفاعلات الحية (P4): تُحدّث عبر message:reaction لاحقاً
+  if (m.id != null) div.appendChild(renderReactionChips(m.id));
 
   // مؤشر التسليم لرسائلي: ⏳ في الطابور / ✓ حُفظت على الخادم
   if (m.senderId === state.user.id) {
@@ -547,19 +681,53 @@ function appendMessage(m) {
     div.appendChild(st);
   }
 
-  if ((m.senderId === state.user.id || canModerate()) && m.type !== "file") {
+  // قائمة الرسائل متاحة على كل رسالة نصية/صوتية/موقع (P4):
+  // الرد/التفاعل/الحفظ للجميع — التعديل والحذف للمرسل — الإشراف للمشرف
+  if (m.type !== "file") {
     div.tabIndex = 0;
     div.setAttribute("aria-label", t("msgActionsHint"));
     div.addEventListener("contextmenu", (e) => { e.preventDefault(); showMsgMenu(m, div); });
     div.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showMsgMenu(m, div); } });
-    let t = null;
-    div.addEventListener("touchstart", () => { t = setTimeout(() => showMsgMenu(m, div), 600); });
-    div.addEventListener("touchend", () => clearTimeout(t));
-    div.addEventListener("touchmove", () => clearTimeout(t));
+    // إصلاح TDZ: كان المتغير `let t` يظلل دالة الترجمة t() في نفس النطاق فيرمي
+    // "Cannot access 't' before initialization" عند رسم أي رسالة — سُمّي touchTimer.
+    let touchTimer = null;
+    div.addEventListener("touchstart", () => { touchTimer = setTimeout(() => showMsgMenu(m, div), 600); });
+    div.addEventListener("touchend", () => clearTimeout(touchTimer));
+    div.addEventListener("touchmove", () => clearTimeout(touchTimer));
   }
 
+  applySearchFilter(div, m);
   $("messages").appendChild(div);
   $("messages").scrollTop = $("messages").scrollHeight;
+}
+
+// لاصقات التفاعلات لرسالة: 👍2 ❤️1 — مصدرها state._reactions الحيّة
+function renderReactionChips(mid) {
+  const row = document.createElement("div");
+  row.className = "reaction-chips";
+  row.dataset.reactionsFor = mid;
+  const list = state._reactions.get(mid) || [];
+  const counts = new Map();
+  for (const r of list) counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+  for (const [emoji, count] of counts) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "reaction-chip";
+    chip.textContent = count > 1 ? `${emoji} ${count}` : emoji;
+    chip.setAttribute("aria-label", `${emoji} ×${count}`);
+    chip.onclick = () => api(`/api/messages/${mid}/reaction`, { method: "PUT", body: JSON.stringify({ emoji }) }).catch((e) => showToast(translateErr(e.message), "error"));
+    row.appendChild(chip);
+  }
+  return row;
+}
+
+// حدث حي: تفاعل تغيّر على الخادم — حدّث الذاكرة واللاصقات فوراً
+function applyReactionUpdate({ messageId, userId, emoji }) {
+  const list = (state._reactions.get(messageId) || []).filter((r) => r.userId !== userId);
+  if (emoji) list.push({ emoji, userId });
+  if (list.length) state._reactions.set(messageId, list); else state._reactions.delete(messageId);
+  const old = document.querySelector(`[data-reactions-for="${messageId}"]`);
+  if (old) old.replaceWith(renderReactionChips(messageId));
 }
 
 function showMsgMenu(m, msgEl) {
@@ -571,6 +739,40 @@ function showMsgMenu(m, msgEl) {
 
   const mine = m.senderId === state.user.id;
   const items = [];
+
+  // شريط التفاعلات (P4 — نمط WhatsApp/Slack): ثمانية إيموجي من القائمة البيضاء
+  // للخادم؛ الإيموجي ميتاداتا بلا محتوى فلا يلمس E2EE. ضغط إيموجي موجود مني = سحب.
+  const reactions = document.createElement("div");
+  reactions.className = "msg-reactions";
+  const mineEmoji = (state._reactions.get(m.id) || []).find((r) => r.userId === state.user.id)?.emoji || null;
+  for (const emoji of REACTIONS) {
+    const rb = document.createElement("button");
+    rb.type = "button";
+    rb.className = "msg-reaction-btn" + (mineEmoji === emoji ? " mine" : "");
+    rb.textContent = emoji;
+    rb.setAttribute("aria-label", `${t("react")} ${emoji}`);
+    rb.onclick = () => { closeMsgMenu(); api(`/api/messages/${m.id}/reaction`, { method: "PUT", body: JSON.stringify({ emoji }) }).catch((e) => showToast(translateErr(e.message), "error")); };
+    reactions.appendChild(rb);
+  }
+  menu.appendChild(reactions);
+
+  // الرد (P4 — عالمي): يعبّئ شريط الرد فوق حقل الكتابة ويرسل مرجع المعرف فقط
+  if (m.id != null) {
+    const reply = document.createElement("button");
+    reply.type = "button";
+    reply.className = "msg-menu-item";
+    reply.textContent = "↩ " + t("reply");
+    reply.onclick = () => { closeMsgMenu(); state.replyTo = { id: m.id, text: m.text || "", senderName: m.senderName || "" }; updateReplyBar(); $("msg-input").focus(); };
+    items.push(reply);
+    // حفظ ⭐ (P4 — نمط Telegram): قائمة محفوظات محلية على الجهاز (E2EE آمن)
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "msg-menu-item";
+    star.textContent = isStarred(m.id) ? "☆ " + t("unstar") : "⭐ " + t("star");
+    star.onclick = () => { closeMsgMenu(); toggleStar(m); showToast(isStarred(m.id) ? "⭐ " + t("starredToast") : t("unstarredToast"), "info"); };
+    items.push(star);
+  }
+
   // رسائلي: تعديل + حذف (عبر socket كما كان). رسالة غيري ومُتاح لي الإشراف:
   // حذف إشرافي (حذف ناعم REST) + تثبيت. رسائل الملفات لا تُعدّل.
   if (mine && m.type !== "file") {
@@ -639,9 +841,125 @@ $("send-form").addEventListener("submit", async (e) => {
   sendOrQueue({
     conversationId: state.activeConv.id, ciphertext, iv, type: "text", ephemeral_ttl: 0,
     key_version: state.activeConv.type === "dm" ? 1 : (state.activeKeyVersion || 1),
+    replyTo: state.replyTo?.id ?? null, // مرجع المعرف فقط — النص المقتبس محلي/مشفر
   }, { preview: text, pendingRender: true });
   $("msg-input").value = "";
+  state.replyTo = null;
+  updateReplyBar();
 });
+
+// ===== شريط الرد (P4): معاينة مقتبسة فوق حقل الكتابة + زر إلغاء =====
+function updateReplyBar() {
+  const bar = $("reply-bar");
+  if (!bar) return;
+  if (state.replyTo) {
+    $("reply-preview").textContent = `${state.replyTo.senderName}: ${(state.replyTo.text || "").slice(0, 80)}`;
+    bar.classList.remove("hidden");
+  } else {
+    bar.classList.add("hidden");
+    $("reply-preview").textContent = "";
+  }
+}
+$("reply-cancel")?.addEventListener("click", () => { state.replyTo = null; updateReplyBar(); });
+
+// ===== مشاركة الموقع (P4 — نمط Meshtastic GPS): إحداثيات مشفرة E2EE
+// نوع location يمر عبر الخادم كما هو — العرض رقاقة + رابط OSM محلياً
+$("loc-btn")?.addEventListener("click", () => {
+  if (!state.activeKey || !state.activeConv) return;
+  if (!navigator.geolocation) return showToast(t("locUnsupported"), "error");
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const loc = { lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) };
+      const { ciphertext, iv } = await RasanCrypto.encrypt(state.activeKey, JSON.stringify(loc));
+      sendOrQueue({
+        conversationId: state.activeConv.id, ciphertext, iv, type: "location", ephemeral_ttl: 0,
+        key_version: state.activeConv.type === "dm" ? 1 : (state.activeKeyVersion || 1),
+      }, { preview: `📍 ${loc.lat}, ${loc.lng}`, pendingRender: true });
+    },
+    () => showToast(t("locDenied"), "error"),
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+  );
+});
+
+// ===== البحث المحلي (P4 — نمط Signal/Telegram): يبحث في النصوص المفكوكة
+// المحلية فقط — الخادم لا يرى ولا يبحث شيئاً (E2EE حقيقي)
+$("search-input")?.addEventListener("input", (e) => {
+  state.searchQuery = e.target.value.trim().toLowerCase();
+  let matches = 0, total = 0;
+  for (const div of $("messages").querySelectorAll(".msg")) {
+    total++;
+    const mid = Number(div.dataset.mid);
+    const cached = state._msgCache.get(mid);
+    const hay = (cached?.text || div.querySelector(".text")?.textContent || "").toLowerCase();
+    const hit = !state.searchQuery || hay.includes(state.searchQuery);
+    div.classList.toggle("search-hidden", !hit);
+    if (hit && state.searchQuery) matches++;
+  }
+  $("search-count").textContent = state.searchQuery ? `${matches}/${total}` : "";
+});
+
+// فلترة رسالة واحدة حسب البحث الجاري (تُستدعى من appendMessage)
+function applySearchFilter(div, m) {
+  if (!state.searchQuery) return;
+  const hay = (m.text || "").toLowerCase();
+  div.classList.toggle("search-hidden", !hay.includes(state.searchQuery));
+}
+
+// ===== المحفوظات (P4 — نمط Telegram): قائمة محلية على الجهاز
+$("starred-btn")?.addEventListener("click", () => { openModal("starred-modal"); renderStarred(); });
+$("close-starred")?.addEventListener("click", () => closeModal("starred-modal"));
+
+// ===== قائمة حظري (P4): تُحمّل عند الدخول وتغذي أزرار الحظر في نافذة الأعضاء
+async function loadBlocks() {
+  try {
+    const { blocks } = await api("/api/users/blocks");
+    state._blocked = new Set(blocks.map((b) => b.userId));
+  } catch { state._blocked = new Set(); }
+}
+function renderStarred() {
+  const ul = $("starred-list");
+  ul.innerHTML = "";
+  if (!state.starred.length) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = t("noStarred");
+    ul.appendChild(p);
+    return;
+  }
+  for (const s of [...state.starred].sort((a, b) => b.time - a.time)) {
+    const li = document.createElement("li");
+    li.className = "starred-item";
+    li.tabIndex = 0;
+    const conv = state.convs.find((c) => c.id === s.convId);
+    const name = document.createElement("b");
+    name.textContent = `${s.senderName} · ${conv?.name || "DM #" + s.convId}`;
+    const txt = document.createElement("span");
+    txt.textContent = s.text.slice(0, 120);
+    const jump = document.createElement("button");
+    jump.type = "button";
+    jump.className = "icon";
+    jump.textContent = "⤴";
+    jump.setAttribute("aria-label", t("jumpToMsg"));
+    jump.onclick = async () => {
+      closeModal("starred-modal");
+      if (state.activeConv?.id !== s.convId) {
+        const conv = state.convs.find((c) => c.id === s.convId);
+        if (!conv) return;
+        await openConversation(conv);
+      }
+      document.querySelector(`[data-mid="${s.mid}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    const unstar = document.createElement("button");
+    unstar.type = "button";
+    unstar.className = "icon";
+    unstar.textContent = "☆";
+    unstar.setAttribute("aria-label", t("unstar"));
+    unstar.onclick = () => { toggleStar({ id: s.mid, conversationId: s.convId, text: s.text, senderName: s.senderName, time: s.time }); renderStarred(); };
+    li.append(name, txt, jump, unstar);
+    li.addEventListener("keydown", (e) => { if (e.key === "Enter") jump.onclick(); });
+    ul.appendChild(li);
+  }
+}
 
 let typingTimer = null;
 $("msg-input").addEventListener("input", () => {
@@ -1583,6 +1901,29 @@ async function renderMembersLists() {
     badge.textContent = roleLabel(m.role);
     li.append(name, badge);
 
+    // حظر شخصي (P4): متاح لكل عضو على غير نفسه — يمنع DM جديدة وإضافته
+    // للمجموعات من حسابي ويصمت DM القائمة (بوابات الخادم في interactions.js)
+    {
+      const blockBtn = document.createElement("button");
+      blockBtn.type = "button";
+      const blocked = state._blocked?.has(m.id);
+      blockBtn.textContent = blocked ? "♻" : "🚫";
+      blockBtn.title = blocked ? t("unblockUser") : t("blockUser");
+      blockBtn.setAttribute("aria-label", blockBtn.title);
+      blockBtn.onclick = async () => {
+        try {
+          if (blocked) await api(`/api/users/${m.id}/block`, { method: "DELETE" });
+          else {
+            if (!confirm(t("blockConfirm"))) return;
+            await api(`/api/users/${m.id}/block`, { method: "POST" });
+          }
+          await loadBlocks();
+          renderMembersLists();
+        } catch (e) { $("members-err").textContent = translateErr(e.message); }
+      };
+      li.appendChild(blockBtn);
+    }
+
     if (admin && m.id !== state.user.id && m.role !== "owner") {
       const actions = document.createElement("span");
       actions.className = "m-actions";
@@ -1668,7 +2009,11 @@ $("member-add-form").addEventListener("submit", async (e) => {
     state.activeConv._members = members;
     renderMembersLists();
   } catch (err) {
-    $("members-err").textContent = String(err.message).includes("banned") ? t("bannedErr") : translateErr(err.message);
+    const msg = String(err.message);
+    if (msg.includes("banned")) $("members-err").textContent = t("bannedErr");
+    else if (msg.includes("blocked_by_user")) $("members-err").textContent = t("blockedByUser");
+    else if (msg.includes("you_blocked_user")) $("members-err").textContent = t("youBlockedUser");
+    else $("members-err").textContent = translateErr(msg);
   }
 });
 
