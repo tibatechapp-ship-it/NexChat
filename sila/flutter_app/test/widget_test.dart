@@ -28,6 +28,7 @@ void main() {
     await tester.pumpWidget(const SilaApp());
 
     await tester.enterText(find.byType(TextField), 'مرحبا بالجميع');
+    await tester.pump();
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
 
@@ -43,6 +44,7 @@ void main() {
     expect(find.text('أنت'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), '   ');
+    await tester.pump();
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
 
@@ -57,6 +59,7 @@ void main() {
     await tester.pump();
 
     await tester.enterText(find.byType(TextField), 'عبر الإنترنت');
+    await tester.pump();
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
 

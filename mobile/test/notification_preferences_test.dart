@@ -93,7 +93,7 @@ void main() {
       // الجسم الوحيد غير الفارغ هو PUT التفضيلات (GET لا جسم له)
       expect(
         bodies.where((b) => b.isNotEmpty).single,
-        jsonEncode({'messages': true, 'invites': false}),
+        jsonEncode({'messages': true, 'invites': false, 'emergencies': true}),
       );
     });
 
