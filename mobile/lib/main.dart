@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/auth/auth_service.dart';
+import 'core/auth/session_guard.dart';
 import 'push/notification_preferences.dart';
 import 'push/push_service.dart';
 import 'screens/auth_gate.dart';
@@ -30,6 +31,11 @@ Future<void> main() async {
   // الجلسة: استعادة محلية سريعة (JWT من التخزين الآمن) — وعند وجود
   // جلسة يُعاد ربط توكن FCM بها فوراً (AuthService.restoreSession).
   final authController = AuthController();
+  // معالج 401 المركزي: أي استجابة 401 من عملاء REST ⇒ خروج قسري
+  // بالترتيب الإلزامي (إلغاء تسجيل الإشعارات أولاً لأنه يتطلب Bearer
+  // JWT، ثم مسح JWT) — وAuthGate يوجّه تلقائياً إلى شاشة الدخول.
+  // يُربط قبل الاستعادة لأن أول نداء شبكي قد يبدأ من هنا.
+  SessionGuard.instance.attach(authController.logout);
   await authController.restore();
 
   runApp(

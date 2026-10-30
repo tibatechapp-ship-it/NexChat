@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config.dart';
+import '../core/auth/session_guard.dart';
 
 /// عميل REST لنقاط الإشعارات في الخادم (`Config.apiBase`):
 ///
@@ -32,6 +33,18 @@ class PushApi {
 
   Uri _u(String path) => Uri.parse('${Config.apiBase}$path');
 
+  /// معالج 401 المركزي: أي استجابة 401 هنا تعني أن الجلسة لم تعد
+  /// صالحة — خروج قسري بالترتيب الإلزامي (إلغاء تسجيل الإشعارات
+  /// ثم مسح JWT) وتوجيه إلى شاشة الدخول عبر AuthGate.
+  ///
+  /// ملاحظة: إلغاء التسجيل نفسه (`unregisterToken`) قد يرجع 401
+  /// بجلسة منتهية — SessionGuard يمنع إعادة الدخول فلا حلقة.
+  Future<void> _on401(http.Response res) async {
+    if (res.statusCode == 401) {
+      await SessionGuard.instance.onUnauthorized();
+    }
+  }
+
   /// تسجيل توكن FCM للمستخدم الحالي. false عند غياب الجلسة أو الفشل.
   Future<bool> registerToken(String fcmToken, String platform) async {
     if (_jwt == null) return false;
@@ -41,6 +54,7 @@ class PushApi {
         headers: _headers,
         body: jsonEncode({'token': fcmToken, 'platform': platform}),
       );
+      await _on401(res);
       return res.statusCode == 200;
     } catch (_) {
       return false;
@@ -56,6 +70,7 @@ class PushApi {
         headers: _headers,
         body: jsonEncode({'token': fcmToken}),
       );
+      await _on401(res);
       return res.statusCode == 200;
     } catch (_) {
       return false;
@@ -68,6 +83,7 @@ class PushApi {
     try {
       final res =
           await _client.get(_u('/api/push/preferences'), headers: _headers);
+      await _on401(res);
       if (res.statusCode != 200) return null;
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       final prefs = body['preferences'] as Map<String, dynamic>?;
@@ -99,6 +115,7 @@ class PushApi {
           'emergencies': emergencies,
         }),
       );
+      await _on401(res);
       return res.statusCode == 200;
     } catch (_) {
       return false;

@@ -96,6 +96,18 @@ jobs:
           channel: stable
           cache: true
 
+      # ملفات المنصات (android/ ios/) مرفوعة إلى Git ضمن PR #14 —
+      # flutter create . لا يجوز تشغيلها هنا إطلاقاً: هي أداة تهيئة
+      # تُستخدم مرة واحدة عند بدء المشروع، وتشغيلها في كل build يعيد
+      # توليد widget_test.dart ويكسر التخصيصات اليدوية. نتحقق فقط من
+      # وجود المجلدات (mobile فقط — sila/flutter_app وحدة صلة بلا
+      # مجلدات منصات).
+      - name: Verify platform folders exist
+        if: matrix.app == 'mobile'
+        run: |
+          test -d android || (echo "android/ missing" && exit 1)
+          test -d ios || (echo "ios/ missing" && exit 1)
+
       - name: Pub get
         run: flutter pub get
 
