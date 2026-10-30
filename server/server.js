@@ -11,6 +11,10 @@ const push = require("./push");
 const notifications = require("./notifications");
 // مسح الذعر + وضع الإضطرار (P2 #11 — نمط Briar): حذف الحساب وكل أثره عن بُعد
 const panic = require("./panic");
+// أدوات الإشراف (درس FireChat في بحث الميزات §6): حظر/ترقية/تثبيت/حذف رسائل
+const moderation = require("./moderation");
+// المكالمات الجماعية (WebRTC mesh — يكمل P1: مكالمات المجموعات متعددة الأطراف)
+const groupcalls = require("./groupcalls");
 // بوابة LoRa الاختيارية (P2 #10 — نمط Meshtastic): معطلة بلا LORA_MQTT_URL
 const loraGateway = require("./lora-gateway");
 // صلة (sila) — مساحة الـ Mesh المحلية المنفصلة (بلا DB ولا مصادقة؛ راجع server/sila-mesh.js)
@@ -35,6 +39,7 @@ app.use("/api/attachments", security.uploadLimiter);
 app.use("/api/auth", authRouter);
 app.use("/api", notifications.createRouter({ authRequired }));
 app.use("/api", panic.createRouter({ authRequired, io }));
+app.use("/api", moderation.createRouter({ authRequired, io }));
 
 const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 } });
 
@@ -115,6 +120,16 @@ io.on("connection", (socket) => {
 
     const conv = db.prepare("SELECT type, current_key_version FROM conversations WHERE id = ?").get(conversationId);
     if (!conv) return;
+
+    // القنوات للقراءة فقط (أدوات الإشراف — درس FireChat): النشر للمشرفين
+    // والمالك حصرًا؛ الأعضاء يستقبلون ويقرأون. الرفض بعقد صريح يعرفه العميل.
+    if (conv.type === "channel") {
+      const role = db.prepare("SELECT role FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(conversationId, uid)?.role;
+      if (!role || !["owner", "admin"].includes(role)) {
+        socket.emit("message:rejected", { conversationId, reason: "channel_readonly" });
+        return;
+      }
+    }
 
     if (conv.type !== "dm") {
       const kv = Number.isInteger(key_version) ? key_version : 1;
@@ -278,7 +293,8 @@ io.on("connection", (socket) => {
 
 // ===== REST: conversations =====
 app.get("/api/conversations", authRequired, (req, res) => {
-  const rows = db.prepare(`SELECT c.id, c.type, c.name, c.description, c.owner_id, c.created_at, c.current_key_version,
+  // pinned_message_id مرفق للأدوات الإشرافية — اللاصقة تعرضها فور فتح المحادثة
+  const rows = db.prepare(`SELECT c.id, c.type, c.name, c.description, c.owner_id, c.created_at, c.current_key_version, c.pinned_message_id,
     (SELECT COUNT(*) FROM conversation_members WHERE conversation_id = c.id) AS members
     FROM conversations c JOIN conversation_members m ON m.conversation_id = c.id
     WHERE m.user_id = ? ORDER BY c.created_at DESC`).all(req.user.id);
@@ -322,6 +338,8 @@ app.post("/api/conversations/:id/members", authRequired, (req, res) => {
   const target = db.prepare("SELECT id, username, public_key FROM users WHERE username = ?").get(username);
   if (!target) return res.status(404).json({ error: "user not found" });
   if (!target.public_key) return res.status(400).json({ error: "target has no public key" });
+  // أدوات الإشراف: المحظور لا يُعاد إضافته — 403 صريح يعرضه العميل كحظر
+  if (moderation.isBanned(Number(req.params.id), target.id)) return res.status(403).json({ error: "banned" });
   const exists = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(req.params.id, target.id);
   if (exists) return res.status(409).json({ error: "already a member" });
   db.prepare("INSERT INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)").run(req.params.id, target.id, Date.now());
@@ -465,6 +483,12 @@ function userSockets(userId) {
 }
 
 function clearCallPair(aId, bId) { callBusy.delete(aId); callBusy.delete(bId); }
+
+// المكالمات الجماعية (WebRTC mesh حتى 8 مشاركين — وسائط P2P مشفّرة
+// DTLS-SRTP كالبنائية؛ الخادم موجّه إشارات فقط). callBusy يُمرَّر بالمرجع
+// ليصبح المستخدم مشغولاً أمام المكالمات الثنائية أثناء الجماعية بلا تعديل
+// في فحوصها القائمة (راجع server/groupcalls.js).
+groupcalls.init(io, { callBusy });
 
 // ===== Stories =====
 app.post("/api/stories", authRequired, (req, res) => {

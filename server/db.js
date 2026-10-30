@@ -104,6 +104,22 @@ CREATE TABLE IF NOT EXISTS device_tokens (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_token_user ON device_tokens(user_id);
+CREATE TABLE IF NOT EXISTS conversation_bans (
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  banned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, user_id)
+);
 `);
+
+// ترحيلات تدريجية — ALTER TABLE يفشل إن وُجد العمود فعلًا (قاعدة قائمة) فنهمشه.
+// pinned_message_id: رسالة واحدة مثبّتة لكل محادثة (أدوات الإشراف — درس FireChat
+// في docs/FEATURE_RESEARCH.md §6: قنوات بلا إشراف لا تدوم).
+try {
+  db.exec("ALTER TABLE conversations ADD COLUMN pinned_message_id INTEGER");
+} catch (e) {
+  if (!String(e.message).includes("duplicate column name")) throw e;
+}
 
 module.exports = { db, DATA_DIR, UPLOAD_DIR };

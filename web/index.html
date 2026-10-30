@@ -54,6 +54,10 @@
     <div class="actions">
       <button id="call-btn" class="icon hidden" aria-label="مكالمة صوتية" title="مكالمة صوتية">📞</button>
       <button id="video-call-btn" class="icon hidden" aria-label="مكالمة مرئية" title="مكالمة مرئية">🎥</button>
+      <!-- مكالمة جماعية (WebRTC mesh — للمجموعات والقنوات) -->
+      <button id="group-call-btn" class="icon hidden" aria-label="مكالمة جماعية" title="مكالمة جماعية">📻</button>
+      <!-- إدارة الأعضاء والأدوات الإشرافية (درس FireChat — بحث الميزات §6) -->
+      <button id="members-btn" class="icon hidden" aria-label="إدارة الأعضاء" title="الأعضاء والإشراف">🛡</button>
       <button id="emergency-btn" class="icon emergency hidden" aria-label="إنذار طوارئ" title="إنذار طوارئ">🚨</button>
       <button id="rotate-key" class="icon hidden" aria-label="تدوير مفتاح المجموعة" title="تدوير مفتاح المجموعة">🔄</button>
       <button id="new-chat" class="icon" aria-label="محادثة جديدة" title="محادثة جديدة">+</button>
@@ -71,6 +75,13 @@
       <button id="emergency-dismiss" class="icon" aria-label="إخفاء التنبيه">✕</button>
     </div>
     <div id="security-banner" class="security-banner hidden" role="status" aria-live="polite"></div>
+    <!-- لافتة الرسالة المثبّتة (أدوات الإشراف) — النص مشفّر E2EE فيُفك عند فتح المحادثة -->
+    <div id="pinned-banner" class="pinned-banner hidden" role="status">
+      <span aria-hidden="true">📌</span>
+      <b id="pinned-text">رسالة مثبّتة</b>
+      <button id="pinned-jump" class="icon" aria-label="الانتقال للرسالة المثبّتة">⤴</button>
+      <button id="pinned-unpin" class="icon hidden" aria-label="إلغاء التثبيت">✕</button>
+    </div>
     <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
     <p id="typing" class="typing" aria-live="polite"></p>
     <div id="recording-bar" class="recording-bar hidden" role="status" aria-live="polite">
@@ -86,8 +97,15 @@
       <input type="file" id="file-input" hidden aria-hidden="true" />
       <button type="button" id="attach" class="icon" aria-label="إرفاق ملف" title="إرفاق">📎</button>
       <button type="button" id="mic" class="icon" aria-label="مذكرة صوتية" title="مذكرة صوتية">🎤</button>
+      <!-- وضع للّكة (PTT — نمط Zello/WhatsApp Walkie-Talkie): استمرار الضغط للتحدث -->
+      <button type="button" id="ptt-toggle" class="icon" aria-label="وضع للّكة" aria-pressed="false" title="وضع للّكة (PTT)">🗣</button>
       <button type="submit" id="send-btn" class="send" aria-label="إرسال" title="إرسال">➤</button>
     </form>
+    <!-- شريط للّكة: يظهر في وضع PTT مكان حقل الكتابة — ضغط مستمر = تسجيل، إفلات = إرسال -->
+    <div id="ptt-bar" class="ptt-bar hidden" role="group" aria-label="وضع للّكة">
+      <button type="button" id="ptt-btn" class="ptt-btn">🗣 <span id="ptt-label">اضغط باستمرار للتحدث</span></button>
+      <small id="ptt-hint">إفلات للإرسال — اسحب خارج الزر للإلغاء</small>
+    </div>
   </section>
 </main>
 
@@ -106,6 +124,8 @@
       <button type="button" id="call-reject" class="icon call-danger hidden" aria-label="رفض المكالمة" title="رفض">✕</button>
       <button type="button" id="call-hangup" class="icon call-danger hidden" aria-label="إنهاء المكالمة" title="إنهاء">⏻</button>
     </div>
+    <!-- قائمة المشاركين في المكالمة الجماعية (mesh — كل مشارك اتصال مباشر) -->
+    <ul id="call-participants" class="call-participants hidden" aria-live="polite"></ul>
   </div>
 </section>
 
@@ -166,6 +186,25 @@
     <div class="modal-actions">
       <button id="create-group" class="btn-primary" data-i18n="create">إنشاء</button>
       <button id="close-group" class="btn-secondary" data-i18n="close">إغلاق</button>
+    </div>
+  </div>
+</section>
+
+<!-- Members & moderation modal — الأعضاء + أدوات الإشراف (ترقية/إزالة/حظر) -->
+<section id="members-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="members-title">
+  <div class="modal-card">
+    <h3 id="members-title" data-i18n="manageMembers">إدارة الأعضاء</h3>
+    <form id="member-add-form" class="member-add-form">
+      <label class="sr-only" for="member-add-input" data-i18n="dmUsername">اسم المستخدم</label>
+      <input id="member-add-input" data-i18n-placeholder="dmUsername" placeholder="اسم المستخدم" autocomplete="off" />
+      <button type="submit" id="member-add-btn" class="btn-primary" data-i18n="addMember">إضافة</button>
+    </form>
+    <p id="members-err" class="err" role="alert" aria-live="assertive"></p>
+    <ul id="members-list" class="members-list"></ul>
+    <h4 id="bans-title" class="hidden" data-i18n="bannedList">المحظورون</h4>
+    <ul id="bans-list" class="members-list bans"></ul>
+    <div class="modal-actions">
+      <button id="close-members" class="btn-secondary" data-i18n="close">إغلاق</button>
     </div>
   </div>
 </section>

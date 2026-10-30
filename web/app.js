@@ -291,8 +291,9 @@ async function connectSocket() {
   if (!window.io) await loadScript("/socket.io/socket.io.js");
   state.socket = io({ auth: { token: state.token } });
   state.socket.on("connect", () => { loadOutbox(); flushOutbox(); });
-  state.socket.on("disconnect", () => { if (state.user) showToast(I18N[state.locale].offlineQueued || "انقطع الاتصال — ستوضع الرسائل في الطابور", "error"); teardownCall(true); });
+  state.socket.on("disconnect", () => { if (state.user) showToast(I18N[state.locale].offlineQueued || "انقطع الاتصال — ستوضع الرسائل في الطابور", "error"); teardownCall(true); teardownGroupCall(false); });
   bindCallEvents();
+  bindGroupCallEvents(); // أحداث المكالمات الجماعية (mesh — server/groupcalls.js)
   // إقرار الخادم: الرسالة حُفظت — مؤشر ✓
   state.socket.on("message:ack", ({ clientId }) => setMsgStatus(clientId, "sent"));
   state.socket.on("message", async (msg) => {
@@ -380,7 +381,40 @@ async function connectSocket() {
           state.activeKeyVersion = payload.key_version;
         }
       } catch (e) { console.error(e); }
+    } else if (reason === "channel_readonly") {
+      // القنوات للقراءة فقط — النشر للمشرفين/المالك (أدوات الإشراف)
+      showToast(t("channelReadonly"), "error");
     }
+  });
+
+  // ===== أحداث الإشراف (نافذة الأعضاء حية) =====
+  state.socket.on("member:role", ({ conversationId, userId, role }) => {
+    if (state.activeConv?.id !== conversationId) return;
+    const mm = state.activeConv._members?.find((x) => x.id === userId);
+    if (mm) mm.role = role;
+    if (userId === state.user.id) state.activeConv._myRole = role; // دوري تغيّر
+    if (!$("members-modal").classList.contains("hidden")) renderMembersLists();
+  });
+  state.socket.on("member:banned", ({ conversationId, username }) => {
+    if (state.activeConv?.id !== conversationId) return;
+    if (state.activeConv._members) state.activeConv._members = state.activeConv._members.filter((x) => x.username !== username);
+    showToast(`⛔ ${username} — ${t("memberBannedToast")}`, "info");
+    if (!$("members-modal").classList.contains("hidden")) renderMembersLists();
+  });
+  state.socket.on("member:unbanned", ({ conversationId }) => {
+    if (state.activeConv?.id !== conversationId) return;
+    if (!$("members-modal").classList.contains("hidden")) renderMembersLists();
+  });
+  state.socket.on("message:pinned", ({ conversationId, messageId }) => {
+    if (state.activeConv?.id !== conversationId) return;
+    state.activeConv.pinned_message_id = messageId;
+    updatePinnedBanner();
+    showToast(t("msgPinnedToast"), "info");
+  });
+  state.socket.on("message:unpinned", ({ conversationId }) => {
+    if (state.activeConv?.id !== conversationId) return;
+    state.activeConv.pinned_message_id = null;
+    updatePinnedBanner();
   });
 }
 
@@ -425,9 +459,15 @@ async function openConversation(conv) {
   $("emergency-banner").classList.add("hidden");
   // زر الطوارئ متاح للمجموعات والقنوات (بث جماعي كما في Zello) — لا للخاص
   $("emergency-btn").classList.toggle("hidden", !(conv.type === "group" || conv.type === "channel"));
-  // زرا المكالمات للخاص فقط (مكالمة 1:1 — WebRTC؛ مكالمات المجموعات في مرحلة لاحقة)
+  // زرا المكالمات للخاص فقط (مكالمة 1:1 — WebRTC)
   $("call-btn").classList.toggle("hidden", conv.type !== "dm");
   $("video-call-btn").classList.toggle("hidden", conv.type !== "dm");
+  // زر المكالمة الجماعية (WebRTC mesh) للمجموعات والقنوات — يتطلب متصفحاً يدعم الوسائط
+  $("group-call-btn").classList.toggle("hidden", !((conv.type === "group" || conv.type === "channel") && gcallSupported()));
+  // إدارة الأعضاء/الإشراف للمجموعات والقنوات (درس FireChat)
+  $("members-btn").classList.toggle("hidden", conv.type === "dm");
+  // لاصقة الرسالة المثبّتة تُقرأ من حقل قاعدة البيانات المُرحّل (pinned_message_id)
+  updatePinnedBanner();
   state.socket.emit("join", { conversationId: conv.id });
   $("rotate-key").classList.toggle("hidden", conv.type === "dm");
 
@@ -446,6 +486,13 @@ async function openConversation(conv) {
   } else {
     await ensureGroupKey(conv);
     try { const s = await api(`/api/conversations/${conv.id}/key-state`); state.activeKeyVersion = s.current; } catch {}
+    // الأدوار لأدوات الإشراف: دوري هنا (owner/admin/member) + قائمة الأعضاء
+    // لطابور نافذة الإدارة. فشل الجلب لا يكسر فتح المحادثة (دور افتراضي عضو).
+    try {
+      const { members } = await api(`/api/conversations/${conv.id}/members`);
+      conv._members = members;
+      conv._myRole = members.find((m) => m.id === state.user.id)?.role || "member";
+    } catch { conv._myRole = "member"; }
   }
 
   const { messages } = await api(`/api/conversations/${conv.id}/messages`);
@@ -458,6 +505,8 @@ async function openConversation(conv) {
       appendMessage({ ...m, text });
     }
   }
+  // بعد تحميل الرسائل: نص المثبّتة إن كان معرّفها ضمن المحمّلة (E2EE — يُفك محلياً)
+  updatePinnedBanner();
   $("msg-input").focus();
 }
 
@@ -498,7 +547,7 @@ function appendMessage(m) {
     div.appendChild(st);
   }
 
-  if (m.senderId === state.user.id && m.type !== "file") {
+  if ((m.senderId === state.user.id || canModerate()) && m.type !== "file") {
     div.tabIndex = 0;
     div.setAttribute("aria-label", t("msgActionsHint"));
     div.addEventListener("contextmenu", (e) => { e.preventDefault(); showMsgMenu(m, div); });
@@ -520,22 +569,52 @@ function showMsgMenu(m, msgEl) {
   menu.dataset.msgMenu = "1";
   menu.setAttribute("role", "menu");
 
-  const edit = document.createElement("button");
-  edit.className = "msg-menu-item";
-  edit.textContent = "✏ " + t("editMsg");
-  edit.onclick = () => { closeMsgMenu(); editMessage(m); };
-
-  const del = document.createElement("button");
-  del.className = "msg-menu-item msg-menu-danger";
-  del.textContent = "🗑 " + t("deleteMsg");
-  del.onclick = () => { closeMsgMenu(); if (confirm(t("deleteMsgConfirm"))) state.socket.emit("message:delete", { messageId: m.id }); };
-
-  menu.append(edit, del);
+  const mine = m.senderId === state.user.id;
+  const items = [];
+  // رسائلي: تعديل + حذف (عبر socket كما كان). رسالة غيري ومُتاح لي الإشراف:
+  // حذف إشرافي (حذف ناعم REST) + تثبيت. رسائل الملفات لا تُعدّل.
+  if (mine && m.type !== "file") {
+    const edit = document.createElement("button");
+    edit.className = "msg-menu-item";
+    edit.textContent = "✏ " + t("editMsg");
+    edit.onclick = () => { closeMsgMenu(); editMessage(m); };
+    items.push(edit);
+    const del = document.createElement("button");
+    del.className = "msg-menu-item msg-menu-danger";
+    del.textContent = "🗑 " + t("deleteMsg");
+    del.onclick = () => { closeMsgMenu(); if (confirm(t("deleteMsgConfirm"))) state.socket.emit("message:delete", { messageId: m.id }); };
+    items.push(del);
+  } else if (!mine && canModerate()) {
+    const del = document.createElement("button");
+    del.className = "msg-menu-item msg-menu-danger";
+    del.textContent = "🗑 " + t("modDeleteMsg");
+    del.onclick = async () => {
+      closeMsgMenu();
+      if (!confirm(t("deleteMsgConfirm"))) return;
+      try { await api(`/api/conversations/${state.activeConv.id}/messages/${m.id}`, { method: "DELETE" }); }
+      catch (e) { showToast(translateErr(e.message), "error"); }
+    };
+    items.push(del);
+  }
+  // التثبيت متاح للمشرفين على أي رسالة (منها رسائلهم)
+  if (canModerate()) {
+    const pin = document.createElement("button");
+    pin.className = "msg-menu-item";
+    pin.textContent = "📌 " + t("pinMsg");
+    pin.onclick = async () => {
+      closeMsgMenu();
+      try { await api(`/api/conversations/${state.activeConv.id}/pin`, { method: "PUT", body: JSON.stringify({ messageId: m.id }) }); }
+      catch (e) { showToast(translateErr(e.message), "error"); }
+    };
+    items.push(pin);
+  }
+  if (!items.length) return;
+  for (const it of items) menu.append(it);
   const rect = msgEl.getBoundingClientRect();
   menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 120) + "px";
   menu.style.insetInlineStart = "16px";
   document.body.appendChild(menu);
-  edit.focus();
+  items[0].focus();
   setTimeout(() => document.addEventListener("click", closeMsgMenu, { once: true }), 0);
 }
 
@@ -646,15 +725,31 @@ const VOICE_MAX_MS = 120 * 1000; // حد أقصى دقيقتان كالمذكر�
 
 $("mic").addEventListener("click", startRecording);
 
-async function startRecording() {
-  if (!state.activeConv) return;
-  if (!state.activeKey) return showToast(t("keyNotReady"), "error");
+// startRecording(opts) — opts.ptt: يُستدعى من وضع للّكة (PTT).
+// ترجع true إذا بدأ التسجيل فعلاً — وfalse عند الرفض/الإلغاء المبكر
+// (مثلاً أُفلت زر للّكة قبل جهوزية المايك — فلا يبقى تسجيل يتيم).
+
+// startRecording(opts) — opts.ptt: يُستدعى من وضع للّكة (PTT).
+// ترجع true إذا بدأ التسجيل فعلاً — وfalse عند الرفض/الإلغاء المبكر
+// (مثلاً أُفلت زر للّكة قبل جهوزية المايك — فلا يبقى تسجيل يتيم).
+
+async function startRecording(opts = {}) {
+  if (!state.activeConv) return false;
+  if (!state.activeKey) { showToast(t("keyNotReady"), "error"); return false; }
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-    return showToast("التسجيل الصوتي غير مدعوم في هذا المتصفح", "error");
+    showToast("التسجيل الصوتي غير مدعوم في هذا المتصفح", "error");
+    return false;
   }
   try {
     recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch { return showToast("تعذر الوصول إلى الميكروفون", "error"); }
+
+  // وضع للّكة (PTT): أُفلت الزر قبل جهوزية المايك؟ ألغِ فوراً وبلا تسجيل
+  if (opts?.ptt === true && !pttState.holding) {
+    recStream.getTracks().forEach((tr) => tr.stop());
+    recStream = null;
+    return false;
+  }
 
   const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(m => {
     try { return MediaRecorder.isTypeSupported?.(m); } catch { return false; }
@@ -684,11 +779,66 @@ function stopRecording() {
   recStream = null;
   clearInterval(recTimer);
   $("recording-bar").classList.add("hidden");
-  $("send-form").classList.remove("hidden");
+  // في وضع للّكة يبقى شريط الزر الكبير ظاهراً — لا نُعيد حقل الكتابة
+  if (typeof pttState !== "undefined" && pttState.mode) $("send-form").classList.add("hidden");
+  else $("send-form").classList.remove("hidden");
 }
 
 $("rec-cancel").addEventListener("click", () => { stopRecording(); recChunks = []; });
 $("rec-send").addEventListener("click", sendVoiceNote);
+
+// ===== وضع للّكة (PTT — من بحث الميزات: نمط Zello/WhatsApp Walkie-Talkie) =====
+// زر "استمرار الضغط للتحدث": ضغط = تسجيل، إفلات = إرسال مشفّر فوري عبر مسار
+// المذكرات الصوتية نفسه (نفس التشفير E2EE ونفس المرفقات). سحب خارج الزر =
+// إلغاء. الحد الأدنى 800ms يمنع اللمسات العابرة من إرسال مذكرات فارغة.
+const pttState = { mode: localStorage.getItem("rasan_ptt_mode") === "on", holding: false, startedAt: 0 };
+const PTT_MIN_MS = 800;
+
+function applyPttMode() {
+  // في وضع للّكة يُستبدل حقل الكتابة بأكبُر زر ضغط-مستمر
+  $("send-form").classList.toggle("hidden", pttState.mode);
+  $("ptt-bar").classList.toggle("hidden", !pttState.mode);
+  $("ptt-toggle").setAttribute("aria-pressed", pttState.mode ? "true" : "false");
+  $("ptt-toggle").textContent = pttState.mode ? "🗣 ✓" : "🗣";
+}
+
+$("ptt-toggle").addEventListener("click", () => {
+  pttState.mode = !pttState.mode;
+  localStorage.setItem("rasan_ptt_mode", pttState.mode ? "on" : "off");
+  applyPttMode();
+  showToast(pttState.mode ? t("pttOn") : t("pttOff"), "info");
+});
+
+async function pttStart() {
+  if (pttState.holding || !state.activeConv) return;
+  pttState.holding = true;
+  pttState.startedAt = Date.now();
+  $("ptt-btn").classList.add("holding");
+  const ok = await startRecording({ ptt: true });
+  if (!ok) { pttState.holding = false; $("ptt-btn").classList.remove("holding"); }
+}
+
+function pttStop({ send = true } = {}) {
+  if (!pttState.holding) return;
+  pttState.holding = false;
+  $("ptt-btn").classList.remove("holding");
+  const heldMs = Date.now() - pttState.startedAt;
+  const recording = mediaRecorder && mediaRecorder.state !== "inactive";
+  if (!recording) return;
+  if (send && heldMs >= PTT_MIN_MS) sendVoiceNote(); // إفلات طويل كفاية → إرسال مشفّر
+  else { stopRecording(); recChunks = []; if (heldMs < PTT_MIN_MS) showToast(t("pttTooShort"), "info"); }
+}
+
+function pttCancel() { pttStop({ send: false }); }
+
+$("ptt-btn").addEventListener("pointerdown", (e) => { e.preventDefault(); pttStart(); });
+$("ptt-btn").addEventListener("pointerup", (e) => { e.preventDefault(); pttStop(); });
+$("ptt-btn").addEventListener("pointerleave", pttCancel);  // سحب خارج الزر = إلغاء
+$("ptt-btn").addEventListener("pointercancel", pttCancel);
+$("ptt-btn").addEventListener("contextmenu", (e) => e.preventDefault()); // ضغط طويل على الجوال لا يفتح القائمة
+// إتاحة لوحة المفاتيح: ضغط مفتاح = تسجيل، إفلاته = إرسال (بلا تكرار auto-repeat)
+$("ptt-btn").addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); pttStart(); } });
+$("ptt-btn").addEventListener("keyup", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); pttStop(); } });
 
 async function sendVoiceNote() {
   if (!mediaRecorder || mediaRecorder.state === "inactive") return;
@@ -828,10 +978,13 @@ $("back").addEventListener("click", () => {
   state.activeConv = null; state.activeKey = null;
   $("chat").classList.add("hidden"); $("list").classList.remove("hidden");
   $("back").classList.add("hidden"); $("title").textContent = "رسن";
-  // أزرار المحادثة (طوارئ/مكالمة) لا معنى لها خارج محادثة مفتوحة
+  // أزرار المحادثة (طوارئ/مكالمة/إشراف) لا معنى لها خارج محادثة مفتوحة
   $("call-btn").classList.add("hidden");
   $("video-call-btn").classList.add("hidden");
+  $("group-call-btn").classList.add("hidden");
+  $("members-btn").classList.add("hidden");
   $("emergency-btn").classList.add("hidden");
+  $("pinned-banner").classList.add("hidden");
   window.dispatchEvent(new CustomEvent("rasan:conv-close"));
 });
 
@@ -1092,14 +1245,20 @@ function bindCallEvents() {
 $("call-btn").addEventListener("click", () => startCall(false));
 $("video-call-btn").addEventListener("click", () => startCall(true));
 $("call-hangup").addEventListener("click", () => {
+  // المكالمة الجماعية أولاً — المساران لا يتشاركان حالة أبداً (الخادم يمنع الازدواج)
+  if (gcall) { teardownGroupCall(); return; }
   if (call && state.socket) state.socket.emit("call:end", { toUserId: call.peerId });
   teardownCall();
 });
 $("call-reject").addEventListener("click", () => {
+  // رفض مكالمة جماعية واردة = تجاهل فقط (لا حالة تُرفض لدى الخادم)
+  if (gcallIncoming) { gcallIncoming = null; teardownGroupCall(false); return; }
   if (call && state.socket) state.socket.emit("call:reject", { toUserId: call.peerId });
   teardownCall();
 });
 $("call-accept").addEventListener("click", async () => {
+  // قبول مكالمة جماعية واردة = انضمام للغرفة القائمة (server/groupcalls.js)
+  if (!call && gcallIncoming) { const c = gcallIncoming; gcallIncoming = null; await joinGroupCall(c); return; }
   if (!call || call.role !== "callee") return;
   clearTimeout(ringingTimeout);
   try {
@@ -1116,11 +1275,14 @@ $("call-accept").addEventListener("click", async () => {
   } catch { showToast(t("callFailed"), "error"); if (state.socket && call) state.socket.emit("call:end", { toUserId: call.peerId }); teardownCall(); }
 });
 $("call-mic").addEventListener("click", () => {
-  if (!call?.local) return;
-  call.muted = !call.muted;
-  call.local.getAudioTracks().forEach((tr) => { tr.enabled = !call.muted; });
-  $("call-mic").textContent = call.muted ? "🔇" : "🎙";
-  $("call-mic").setAttribute("aria-label", call.muted ? t("micOff") : t("micOn"));
+  // كتم في المكالمة الجماعية يعمل على مسار الوسائط الجماعي
+  const local = call?.local || gcall?.local;
+  if (!local) return;
+  const mutedNow = call ? !call.muted : !gcall.muted;
+  if (call) call.muted = !call.muted; else gcall.muted = !gcall.muted;
+  local.getAudioTracks().forEach((tr) => { tr.enabled = !(call ? call.muted : gcall.muted); });
+  $("call-mic").textContent = mutedNow ? "🔇" : "🎙";
+  $("call-mic").setAttribute("aria-label", mutedNow ? t("micOff") : t("micOn"));
 });
 $("call-cam").addEventListener("click", () => {
   if (!call?.local) return;
@@ -1128,11 +1290,392 @@ $("call-cam").addEventListener("click", () => {
   call.local.getVideoTracks().forEach((tr) => { tr.enabled = call.camOn; });
   $("call-cam").textContent = call.camOn ? "🎥" : "🚫";
 });
-window.addEventListener("pagehide", () => { if (call && state.socket) state.socket.emit("call:end", { toUserId: call.peerId }); });
+window.addEventListener("pagehide", () => {
+  if (call && state.socket) state.socket.emit("call:end", { toUserId: call.peerId });
+  if (gcall && state.socket) state.socket.emit("groupcall:leave", { conversationId: gcall.convId });
+});
+
+// ===== المكالمات الجماعية (WebRTC mesh — للمجموعات والقنوات؛ يكمل بحث الميزات P1) =====
+// كل مشارك يربط اتصالاً مباشراً مع كل مشارك (mesh حتى 8). الوسائط طرف-لطرف
+// مشفّرة DTLS-SRTP — الخادم موجّه إشارات فقط (server/groupcalls.js). قاعدة
+// بلا-تضارب: **المنضمّ الأحدث يرسل العروض** لكل القائمين — فلا يرسل اثنان
+// عرضاً لبعضهما أبداً. صوت فقط — الفيديو الجماعي يتطلب SFU ولم يدخل النطاق.
+let gcall = null;          // حالة المكالمة الجماعية الحالية (null = لا مكالمة)
+let gcallIncoming = null;  // حالة "مكالمة جماعية جارية" المعروضة للانضمام
+let gcallIgnored = null;   // { conversationId, startedAt } — مكالمة تجاهلتها فلا تعرض ثانية
+let gcallTimer = null;     // مؤقّت مدة المكالمة
+
+function gcallSupported() {
+  return typeof RTCPeerConnection !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+}
+
+/** نظّف كل أثر المكالمة الجماعية محلياً — notify=false عند الانقطاع بالفعل. */
+function teardownGroupCall(notify = true) {
+  clearInterval(gcallTimer); gcallTimer = null;
+  if (gcall) {
+    if (notify && state.socket?.connected) state.socket.emit("groupcall:leave", { conversationId: gcall.convId });
+    for (const pc of gcall.pcs.values()) { try { pc.close(); } catch {} }
+    if (gcall.local) { try { gcall.local.getTracks().forEach((tr) => tr.stop()); } catch {} }
+  }
+  gcall = null; gcallIncoming = null;
+  document.querySelectorAll("audio[data-gcall-audio]").forEach((el) => el.remove());
+  $("call-participants").classList.add("hidden");
+  $("call-participants").innerHTML = "";
+  // لا نخفي الطبقة إن كانت تعرض مكالمة ثنائية قائمة (المساران منفصلان)
+  if (!call) $("call-overlay").classList.add("hidden");
+  $("call-mic").textContent = "🎙";
+}
+
+/** واجهة طبقة المكالمة الجماعية — نفس عناصر طبقة الثنائية + قائمة المشاركين. */
+function gcallShowUI({ title, status, mode }) {
+  // mode: incoming (عرض للانضمام) | active (في المكالمة)
+  $("call-title").textContent = title;
+  $("call-status").textContent = status;
+  $("call-overlay").classList.remove("hidden");
+  $("call-overlay").classList.remove("has-video");
+  $("remote-video").classList.add("hidden");
+  $("local-video").classList.add("hidden");
+  $("call-accept").classList.toggle("hidden", mode !== "incoming");
+  $("call-reject").classList.toggle("hidden", mode !== "incoming");
+  $("call-hangup").classList.toggle("hidden", mode === "incoming");
+  $("call-mic").classList.toggle("hidden", mode === "incoming");
+  $("call-cam").classList.add("hidden");
+  $("call-participants").classList.toggle("hidden", mode !== "active");
+}
+
+function renderParticipants(participants) {
+  const ul = $("call-participants");
+  ul.innerHTML = "";
+  for (const p of participants) {
+    const li = document.createElement("li");
+    li.textContent = p.userId === state.user.id ? `${p.name} (${t("you")})` : p.name;
+    ul.appendChild(li);
+  }
+}
+
+/** اتصال مباشر واحد مع مشارك — offerer: أنا (المنضم الأحدث) أو answerer. */
+function getOrCreatePeerPC(peerId, { offerer }) {
+  let pc = gcall.pcs.get(peerId);
+  if (pc) return pc;
+  pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  gcall.pcs.set(peerId, pc);
+  gcall.local.getTracks().forEach((tr) => pc.addTrack(tr, gcall.local));
+  pc.onicecandidate = (e) => {
+    if (e.candidate && gcall && state.socket)
+      state.socket.emit("gcall:ice", { conversationId: gcall.convId, toUserId: peerId, candidate: JSON.stringify(e.candidate) });
+  };
+  pc.ontrack = (e) => {
+    // عنصر صوت لكل مشارك — يُنظف كله في teardownGroupCall
+    let audio = document.querySelector(`audio[data-gcall-audio="${peerId}"]`);
+    if (!audio) {
+      audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.dataset.gcallAudio = String(peerId);
+      document.body.appendChild(audio);
+    }
+    audio.srcObject = e.streams[0] || new MediaStream([e.track]);
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "failed") { try { pc.close(); } catch {} gcall?.pcs.delete(peerId); }
+  };
+  return pc;
+}
+
+/** المنضم الأحدث: يرسل عرضاً لكل مشارك قائم (قاعدة بلا-تضارب). */
+async function offerToPeer(peer) {
+  const pc = getOrCreatePeerPC(peer.userId, { offerer: true });
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  state.socket.emit("gcall:offer", { conversationId: gcall.convId, toUserId: peer.userId, sdp: JSON.stringify(pc.localDescription) });
+}
+
+async function startGroupCall() {
+  const conv = state.activeConv;
+  if (!conv || conv.type === "dm") return;
+  if (gcall) { showToast(t("callBusySelf"), "error"); return; }
+  if (call) { showToast(t("callBusySelf"), "error"); return; } // في مكالمة ثنائية
+  if (!gcallSupported()) { showToast(t("callUnsupported"), "error"); return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch { showToast(t("callPermissionDenied"), "error"); return; }
+  gcall = { convId: conv.id, local: stream, pcs: new Map(), muted: false, startedAt: 0, participants: [] };
+  gcallIgnored = null; // أنت بدأت المكالمة — لا تجاهل لحالتها
+  gcallShowUI({ title: conv.name || t("groupCall"), status: t("gcallJoining"), mode: "active" });
+  state.socket.emit("groupcall:start", { conversationId: conv.id });
+}
+
+/** انضمام لمكالمة جماعية جارية (زر الانضمام/القبول). */
+async function joinGroupCall(incoming) {
+  const conv = state.activeConv;
+  if (gcall || call || !gcallSupported()) { showToast(t("callBusySelf"), "error"); return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch { showToast(t("callPermissionDenied"), "error"); return; }
+  gcall = { convId: incoming.conversationId, local: stream, pcs: new Map(), muted: false, startedAt: 0, participants: incoming.participants || [] };
+  gcallShowUI({ title: conv?.name || t("groupCall"), status: t("gcallJoining"), mode: "active" });
+  renderParticipants(gcall.participants);
+  state.socket.emit("groupcall:start", { conversationId: incoming.conversationId });
+}
+
+/** ربط أحداث إشارات المكالمة الجماعية — يُستدعى من connectSocket. */
+function bindGroupCallEvents() {
+  // تأكيد الخادم لانضمامي: قائمة المشاركين القائمين — أنا أعرض عليهم جميعاً
+  state.socket.on("groupcall:joined", async ({ conversationId, peers, startedAt }) => {
+    if (!gcall || gcall.convId !== conversationId) return;
+    gcall.startedAt = startedAt || Date.now();
+    gcall.participants = [{ userId: state.user.id, name: state.user.username }, ...peers];
+    renderParticipants(gcall.participants);
+    $("call-status").textContent = t("connecting");
+    clearInterval(gcallTimer);
+    gcallTimer = setInterval(() => {
+      if (!gcall?.startedAt) return;
+      const s = Math.floor((Date.now() - gcall.startedAt) / 1000);
+      $("call-status").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    }, 1000);
+    for (const peer of peers) {
+      try { await offerToPeer(peer); } catch (e) { console.error("gcall offer failed:", e); }
+    }
+  });
+
+  // حالة الغرفة تغيّرت (انضمام/خروج/انتهاء) — لكل من في الغرفة وللرنين
+  state.socket.on("groupcall:state", ({ conversationId, participants, startedBy, startedAt }) => {
+    // 1) أنا في هذه المكالمة: حدّث القائمة، وانتهِ إن لم أعد موجوداً
+    if (gcall && gcall.convId === conversationId) {
+      gcall.participants = participants;
+      renderParticipants(participants);
+      if (!participants.some((p) => p.userId === state.user.id)) {
+        teardownGroupCall(false);
+        showToast(t("gcallEnded"), "info");
+      }
+      return;
+    }
+    // 2) أنا لست فيها: رنين إن كانت في المحادثة المفتوحة (ما لم أتجاهلها)
+    const me = state.activeConv;
+    if (me?.id === conversationId && !call && !gcall && gcallSupported() && participants.length > 0) {
+      if (gcallIgnored && gcallIgnored.conversationId === conversationId && gcallIgnored.startedAt === startedAt) return;
+      gcallIncoming = { conversationId, participants, startedBy, startedAt };
+      gcallShowUI({ title: me.name || t("groupCall"), status: `${t("gcallIncoming")} (${participants.length})`, mode: "incoming" });
+    } else if (gcallIncoming?.conversationId === conversationId && participants.length === 0) {
+      // انتهت المكالمة التي كانت ترن — ارفع العرض
+      gcallIncoming = null;
+      if (!call && !gcall) $("call-overlay").classList.add("hidden");
+    }
+  });
+
+  // عرض من مشارك قائم إليّ (المنضم الأحدث أنا؟ لا — عرض يعني أنّه منضم أحدث مني)
+  state.socket.on("gcall:offer", async ({ from, conversationId, sdp }) => {
+    if (!gcall || gcall.convId !== conversationId) return; // لا مكالمة — تجاهل
+    try {
+      const pc = getOrCreatePeerPC(from, { offerer: false });
+      await pc.setRemoteDescription(JSON.parse(sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      state.socket.emit("gcall:answer", { conversationId, toUserId: from, sdp: JSON.stringify(pc.localDescription) });
+    } catch (e) { console.error("gcall answer failed:", e); }
+  });
+
+  state.socket.on("gcall:answer", async ({ from, sdp }) => {
+    const pc = gcall?.pcs.get(from);
+    if (!pc) return;
+    try {
+      await pc.setRemoteDescription(JSON.parse(sdp));
+      // فرّغ مرشحات ICE الواردة قبل جهوزية الوصف البعيد
+      const pending = gcall.icePending?.get(from) || [];
+      for (const c of pending) { try { await pc.addIceCandidate(JSON.parse(c)); } catch {} }
+      if (gcall.icePending) gcall.icePending.delete(from);
+    } catch (e) { console.error("gcall remote desc failed:", e); }
+  });
+
+  state.socket.on("gcall:ice", async ({ from, candidate }) => {
+    if (!gcall || typeof candidate !== "string") return;
+    const pc = gcall.pcs.get(from);
+    if (!pc || !pc.remoteDescription) {
+      if (!gcall.icePending) gcall.icePending = new Map();
+      if (!gcall.icePending.has(from)) gcall.icePending.set(from, []);
+      gcall.icePending.get(from).push(candidate);
+      return;
+    }
+    try { await pc.addIceCandidate(JSON.parse(candidate)); } catch {}
+  });
+
+  state.socket.on("groupcall:full", () => {
+    teardownGroupCall(false);
+    showToast(t("gcallFull"), "error");
+  });
+  state.socket.on("groupcall:error", ({ reason }) => {
+    teardownGroupCall(false);
+    showToast(reason === "forbidden" ? t("callForbidden") : t("callFailed"), "error");
+  });
+}
+
+$("group-call-btn").addEventListener("click", startGroupCall);
+
+// ===== أدوات الإشراف (درس FireChat — بحث الميزات §6: قنوات بلا إشراف لا تدوم) =====
+// دوري في المحادثة الحالية: owner/admin يحصلان على قائمة الأعضاء والحذف
+// الإشرافي والتثبيت والحظر. الأدوار تُجلب عند فتح المحادثة (openConversation).
+function canModerate() {
+  const conv = state.activeConv;
+  if (!conv || conv.type === "dm") return false;
+  return ["owner", "admin"].includes(conv._myRole);
+}
+
+/** لاصقة الرسالة المثبّتة — تُظهر نصها إن كان مشفراً متاحاً (E2EE: الخادم لا يرى النص). */
+function updatePinnedBanner() {
+  const conv = state.activeConv;
+  const pinnedId = conv?.pinned_message_id;
+  if (!conv || conv.type === "dm" || !pinnedId) {
+    $("pinned-banner").classList.add("hidden");
+    return;
+  }
+  $("pinned-banner").classList.remove("hidden");
+  $("pinned-unpin").classList.toggle("hidden", !canModerate());
+  const el = document.querySelector(`[data-mid="${pinnedId}"] .text`);
+  $("pinned-text").textContent = el ? el.textContent : t("pinnedMsg");
+}
+
+$("pinned-jump").addEventListener("click", () => {
+  const id = state.activeConv?.pinned_message_id;
+  if (!id) return;
+  const el = document.querySelector(`[data-mid="${id}"]`);
+  if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.style.outline = "2px solid var(--accent)"; setTimeout(() => (el.style.outline = ""), 1500); }
+});
+
+$("pinned-unpin").addEventListener("click", async () => {
+  if (!canModerate() || !state.activeConv) return;
+  try { await api(`/api/conversations/${state.activeConv.id}/pin`, { method: "DELETE" }); }
+  catch (e) { showToast(translateErr(e.message), "error"); }
+});
+
+// ===== نافذة إدارة الأعضاء =====
+$("members-btn").addEventListener("click", async () => {
+  if (!state.activeConv || state.activeConv.type === "dm") return;
+  openModal("members-modal");
+  try {
+    const { members } = await api(`/api/conversations/${state.activeConv.id}/members`);
+    state.activeConv._members = members;
+    state.activeConv._myRole = members.find((m) => m.id === state.user.id)?.role || "member";
+  } catch {}
+  await renderMembersLists();
+});
+$("close-members").addEventListener("click", () => closeModal("members-modal"));
+
+async function renderMembersLists() {
+  const conv = state.activeConv;
+  if (!conv) return;
+  const list = $("members-list");
+  const bansUl = $("bans-list");
+  list.innerHTML = "";
+  $("bans-title").classList.add("hidden");
+  bansUl.innerHTML = "";
+  const roleLabel = (r) => (r === "owner" ? t("roleOwner") : r === "admin" ? t("roleAdmin") : t("roleMember"));
+  const admin = canModerate();
+  const owner = conv._myRole === "owner";
+
+  for (const m of conv._members || []) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "m-name";
+    name.textContent = m.username;
+    const badge = document.createElement("span");
+    badge.className = "m-role " + m.role;
+    badge.textContent = roleLabel(m.role);
+    li.append(name, badge);
+
+    if (admin && m.id !== state.user.id && m.role !== "owner") {
+      const actions = document.createElement("span");
+      actions.className = "m-actions";
+      // المالك وحده يغيّر الأدوار (server/moderation.js)
+      if (owner) {
+        const promote = document.createElement("button");
+        promote.type = "button";
+        promote.textContent = m.role === "admin" ? "⬇" : "⬆";
+        promote.title = m.role === "admin" ? t("demote") : t("promote");
+        promote.setAttribute("aria-label", promote.title);
+        promote.onclick = async () => {
+          try {
+            await api(`/api/conversations/${conv.id}/members/${m.id}/role`, { method: "PUT", body: JSON.stringify({ role: m.role === "admin" ? "member" : "admin" }) });
+          } catch (e) { $("members-err").textContent = translateErr(e.message); }
+        };
+        actions.appendChild(promote);
+      }
+      const kick = document.createElement("button");
+      kick.type = "button";
+      kick.textContent = "✖";
+      kick.title = t("kickMember");
+      kick.setAttribute("aria-label", t("kickMember"));
+      kick.onclick = async () => {
+        if (!confirm(t("kickConfirm"))) return;
+        try { await api(`/api/conversations/${conv.id}/members/${m.id}`, { method: "DELETE" }); }
+        catch (e) { $("members-err").textContent = translateErr(e.message); }
+      };
+      actions.appendChild(kick);
+      const ban = document.createElement("button");
+      ban.type = "button";
+      ban.textContent = "⛔";
+      ban.title = t("banMember");
+      ban.setAttribute("aria-label", t("banMember"));
+      ban.onclick = async () => {
+        if (!confirm(t("banConfirm"))) return;
+        try { await api(`/api/conversations/${conv.id}/bans`, { method: "POST", body: JSON.stringify({ username: m.username }) }); }
+        catch (e) { $("members-err").textContent = translateErr(e.message); }
+      };
+      actions.appendChild(ban);
+      li.appendChild(actions);
+    }
+    list.appendChild(li);
+  }
+
+  if (admin) {
+    try {
+      const { bans } = await api(`/api/conversations/${conv.id}/bans`);
+      if (bans.length) {
+        $("bans-title").classList.remove("hidden");
+        for (const b of bans) {
+          const li = document.createElement("li");
+          const name = document.createElement("span");
+          name.className = "m-name";
+          name.textContent = b.username;
+          const unban = document.createElement("button");
+          unban.type = "button";
+          unban.textContent = "♻";
+          unban.title = t("unbanMember");
+          unban.setAttribute("aria-label", t("unbanMember"));
+          unban.onclick = async () => {
+            try { await api(`/api/conversations/${conv.id}/bans/${b.userId}`, { method: "DELETE" }); }
+            catch (e) { $("members-err").textContent = translateErr(e.message); }
+          };
+          li.append(name, unban);
+          bansUl.appendChild(li);
+        }
+      }
+    } catch {} // عضو عادي — بلا قائمة حظر
+  }
+}
+
+// إضافة عضو من نافذة الإدارة (نفس نقطة POST members في server.js + فحص الحظر)
+$("member-add-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!state.activeConv || !canModerate()) return;
+  const username = $("member-add-input").value.trim();
+  $("members-err").textContent = "";
+  if (!username) return;
+  try {
+    await api(`/api/conversations/${state.activeConv.id}/members`, { method: "POST", body: JSON.stringify({ username }) });
+    $("member-add-input").value = "";
+    const { members } = await api(`/api/conversations/${state.activeConv.id}/members`);
+    state.activeConv._members = members;
+    renderMembersLists();
+  } catch (err) {
+    $("members-err").textContent = String(err.message).includes("banned") ? t("bannedErr") : translateErr(err.message);
+  }
+});
 
 // ===== Boot =====
 (async function boot() {
   if (!state.token) return;
+  applyPttMode(); // استعادة وضع للّكة المحفوظ قبل أي فتح محادثة
   loadOutbox();
   try {
     const { user } = await api("/api/auth/me");

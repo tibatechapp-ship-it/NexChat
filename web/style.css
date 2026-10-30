@@ -225,3 +225,35 @@ header h2{font-size:1.0625rem;color:var(--text);font-weight:600}
 .panic-row input:focus{border-color:var(--accent)}
 .panic-section > input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--surface-3);background:var(--surface-2);color:var(--text);font-size:0.875rem;margin-bottom:6px;font-family:inherit}
 .panic-section .call-danger{width:100%;padding:11px;border:0;border-radius:10px;font-weight:700;cursor:pointer;margin-top:4px}
+
+/* ===== لاصقة الرسالة المثبّتة (أدوات الإشراف — درس FireChat) ===== */
+.pinned-banner{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(42,156,142,.12);border-bottom:1px solid var(--surface-3);font-size:0.8125rem;color:var(--text);flex-shrink:0}
+.pinned-banner b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.pinned-banner .icon{font-size:0.875rem;width:30px;height:30px}
+
+/* ===== وضع للّكة (PTT — نمط Zello/WhatsApp Walkie-Talkie) ===== */
+.ptt-bar{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
+.ptt-btn{width:100%;padding:18px 16px;border:0;border-radius:16px;background:var(--accent);color:#fff;font-size:1rem;font-weight:700;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none;font-family:inherit;transition:transform .08s ease,filter .15s ease}
+.ptt-btn:active,.ptt-btn.holding{filter:brightness(.85);transform:scale(.985)}
+.ptt-btn.holding{background:var(--danger)}
+.ptt-bar small{color:var(--muted);text-align:center;font-size:0.6875rem}
+
+/* ===== إدارة الأعضاء والإشراف ===== */
+.member-add-form{display:flex;gap:8px;margin-bottom:8px}
+.member-add-form input{flex:1;padding:10px;border-radius:10px;border:1px solid var(--surface-3);background:var(--surface-2);color:var(--text);font-family:inherit}
+.members-list{list-style:none;margin:8px 0;padding:0;max-height:220px;overflow-y:auto}
+.members-list li{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--surface-3);font-size:0.875rem;color:var(--text)}
+.members-list li:last-child{border-bottom:0}
+.members-list .m-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.members-list .m-role{font-size:0.6875rem;padding:2px 8px;border-radius:999px;background:var(--surface-3);color:var(--muted);flex-shrink:0}
+.members-list .m-role.owner{background:rgba(42,156,142,.18);color:var(--accent)}
+.members-list .m-role.admin{background:rgba(233,168,76,.18);color:var(--accent)}
+.members-list .m-actions{display:flex;gap:4px;flex-shrink:0}
+.members-list .m-actions button{border:0;background:transparent;cursor:pointer;font-size:0.9375rem;padding:4px 6px;border-radius:8px;color:var(--muted)}
+.members-list .m-actions button:hover{background:var(--surface-3);color:var(--text)}
+.members-list.bans li{color:var(--danger)}
+
+/* ===== قائمة مشاركي المكالمة الجماعية ===== */
+.call-participants{list-style:none;margin:10px 0 0;padding:0;max-height:120px;overflow-y:auto;min-width:220px;text-align:start}
+.call-participants li{font-size:0.8125rem;color:var(--accent);padding:3px 0}
+.call-participants li::before{content:"🎙 ";opacity:.7}
