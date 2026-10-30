@@ -56,6 +56,15 @@ removed, and `tests/server-deps.test.js` is added — a deploy-contract guard
 that fails the suite if the server ever requires a module missing from
 `server/package.json`, so this bug class cannot return.
 
+**Fourth pass — the push chain is now end-to-end completable (2026-10-30):**
+with `firebase-admin` declared (third pass) and the mobile client registering
+tokens after login (PR #14), the last gap was production credentials delivery:
+`server/push.js` now reads `FCM_SERVICE_ACCOUNT_JSON` (the whole service-account
+JSON as one env var — matches the GitHub secret of that name) before falling
+back to `FCM_CREDENTIALS`/file, `render.yaml` declares both as `sync: false`,
+`docs/PUSH-SETUP.md` documents the Render path, and `tests/push-config.test.js`
+guards the chain. Setting the env on Render is the only manual step left.
+
 ## 3. Dev experience (added)
 
 | File | Purpose |

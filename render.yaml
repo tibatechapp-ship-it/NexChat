@@ -38,10 +38,14 @@ services:
         generateValue: true
       - key: DATA_DIR
         value: /opt/render/project/src/data
-      # FCM push credentials — the full service-account JSON is pasted once at
-      # blueprint apply time (Render prompts for sync:false values). server/push.js
-      # reads it via process.env.FCM_CREDENTIALS; without it the push layer is
+      # FCM push credentials — set ONE of these at blueprint apply time (Render
+      # prompts for sync:false values). server/push.js prefers
+      # FCM_SERVICE_ACCOUNT_JSON (the whole service-account JSON as one env
+      # var — matches the GitHub secret of the same name) and falls back to
+      # FCM_CREDENTIALS (a file path). Without either, the push layer is
       # disabled by design, everything else keeps working.
+      - key: FCM_SERVICE_ACCOUNT_JSON
+        sync: false
       - key: FCM_CREDENTIALS
         sync: false
     disk:

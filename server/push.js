@@ -9,10 +9,19 @@ let ready = false;
 
 function init() {
   if (!admin) { console.warn("[push] disabled — firebase-admin not installed (expected in production: it is a declared dependency)"); return; }
+  const envJson = process.env.FCM_SERVICE_ACCOUNT_JSON;
   const credPath = process.env.FCM_CREDENTIALS || path.join(__dirname, "firebase-service-account.json");
-  if (!fs.existsSync(credPath)) { console.warn("[push] disabled — no FCM credentials (set FCM_CREDENTIALS or add firebase-service-account.json)"); return; }
+  if (!envJson && !fs.existsSync(credPath)) {
+    console.warn("[push] disabled — no FCM credentials (set FCM_SERVICE_ACCOUNT_JSON with the service-account JSON, or FCM_CREDENTIALS with a file path)");
+    return;
+  }
   try {
-    admin.initializeApp({ credential: admin.credential.cert(require(path.resolve(credPath))) });
+    if (envJson) {
+      // Render-friendly: the whole service-account JSON as a single env var.
+      admin.initializeApp({ credential: admin.credential.cert(JSON.parse(envJson)) });
+    } else {
+      admin.initializeApp({ credential: admin.credential.cert(require(path.resolve(credPath))) });
+    }
     messaging = admin.messaging();
     ready = true;
     console.log("[push] ready");
