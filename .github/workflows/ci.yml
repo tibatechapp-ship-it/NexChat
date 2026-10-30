@@ -34,7 +34,12 @@ jobs:
       - name: Test
         run: npm test
 
+      # Full-history scan instead of push-range scans: gitleaks-action computes
+      # <oldest-new-commit>^..<head>, which crashes ("unknown revision") when a
+      # push introduces a root commit - git subtree add --squash creates exactly
+      # such a parentless commit (see sila/). Docker keeps the tool pinned and
+      # the scan exhaustive; exit 1 on any leak keeps the fail-closed contract.
       - name: Secrets
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:latest \
+            detect --source="/repo" --no-banner --redact --verbose
