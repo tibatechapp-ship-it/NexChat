@@ -18,6 +18,23 @@ void main() {
       expect(NotificationTemplates.groupInvite, 'لديك دعوة إلى مجموعة');
     });
 
+    test('نص الطوارئ يطابق قالب الخادم حرفياً ولا يقع في فخ الرسالة الجديدة', () {
+      // المرآة الحرفية لـ TEMPLATES.emergency في server/notifications.js —
+      // إشعار طوارئ يجب ألا يُعرض كـ«لديك رسالة جديدة» (انحدار مضلِّل).
+      expect(
+        NotificationTemplates.emergency,
+        '🚨 تنبيه طوارئ — افتح التطبيق الآن',
+      );
+      expect(
+        NotificationTemplates.bodyForKind('emergency'),
+        NotificationTemplates.emergency,
+      );
+      expect(
+        NotificationTemplates.bodyForKind('emergency'),
+        isNot(NotificationTemplates.newMessage),
+      );
+    });
+
     test('bodyForKind: kind معروف ⇒ القالب المطابق', () {
       expect(
         NotificationTemplates.bodyForKind('group_invite'),

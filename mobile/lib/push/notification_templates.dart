@@ -16,8 +16,20 @@ class NotificationTemplates {
   /// إشعار دعوة إلى مجموعة.
   static const String groupInvite = 'لديك دعوة إلى مجموعة';
 
+  /// إشعار الطوارئ — يطابق حرفياً `TEMPLATES.emergency` في الخادم.
+  /// قبل الإصلاح كان kind=emergency يعرض نص الرسالة الجديدة (مضلِّل).
+  static const String emergency = '🚨 تنبيه طوارئ — افتح التطبيق الآن';
+
   /// اختيار النص حسب نوع الإشعار القادم في data.kind —
   /// أي نوع غير معروف يعامل كرسالة جديدة (النص الأكثر حيادية).
-  static String bodyForKind(String? kind) =>
-      kind == 'group_invite' ? groupInvite : newMessage;
+  static String bodyForKind(String? kind) {
+    switch (kind) {
+      case 'group_invite':
+        return groupInvite;
+      case 'emergency':
+        return emergency;
+      default:
+        return newMessage;
+    }
+  }
 }
