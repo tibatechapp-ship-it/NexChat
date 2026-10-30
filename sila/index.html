@@ -12,6 +12,9 @@
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
+    <!-- عميل Socket.IO من خادم رسن (نفس الأصل). عند التشغيل عبر Vite فقط سيفشل
+         التحميل بصمت — والجسر netBridge يتعامل مع ذلك ويعتمد BroadcastChannel وحده. -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="./src/main.js"></script>
   </body>
 </html>

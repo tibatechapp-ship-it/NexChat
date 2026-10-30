@@ -9,6 +9,8 @@ const { router: authRouter, verifyToken, authRequired } = require("./auth");
 const security = require("./security");
 const push = require("./push");
 const notifications = require("./notifications");
+// صلة (sila) — مساحة الـ Mesh المحلية المنفصلة (بلا DB ولا مصادقة؛ راجع server/sila-mesh.js)
+const silaMesh = require("./sila-mesh");
 
 const app = express();
 const server = http.createServer(app);
@@ -19,6 +21,8 @@ app.use(security.securityHeaders);
 app.use(security.requireJson);
 app.use(express.json({ limit: "64kb" }));
 app.use(express.static(path.join(__dirname, "..", "web"), { maxAge: "1h" }));
+// عميل صلة الثابت على /sila — نموذج أولي مستقل بلا بناء (Vite غير مطلوب هنا)
+app.use("/sila", express.static(path.join(__dirname, "..", "sila"), { maxAge: "1h", dotfiles: "ignore" }));
 
 app.use("/api/auth/login", security.authLimiter);
 app.use("/api/auth/register", security.authLimiter);
@@ -30,6 +34,7 @@ app.use("/api", notifications.createRouter({ authRequired }));
 const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 } });
 
 push.init();
+silaMesh.init(io); // مساحة /sila على Socket.IO — نقل حقيقي بين الأجهزة لصلة
 
 // Deployment identity. Render exports the commit it is serving, so a post-deploy
 // check can prove that the LIVE process runs the code which just landed — a 200
