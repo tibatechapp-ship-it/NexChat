@@ -77,7 +77,12 @@ class _ChatPageState extends State<ChatPage> {
           title: const Row(children: [
             CircleAvatar(backgroundColor: Color(0xFFC7F46B), child: Text('ص', style: TextStyle(color: Color(0xFF142117), fontWeight: FontWeight.bold))),
             SizedBox(width: 10),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('صلة', style: TextStyle(fontWeight: FontWeight.bold)), Text('تواصل بلا حدود', style: TextStyle(fontSize: 10, color: Color(0xFF8C9B94)))])
+            Flexible(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('صلة', style: const TextStyle(fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                Text('تواصل بلا حدود', style: const TextStyle(fontSize: 10, color: Color(0xFF8C9B94)), overflow: TextOverflow.ellipsis),
+              ]),
+            )
           ]),
           actions: const [Padding(padding: EdgeInsets.symmetric(horizontal: 18), child: Row(children: [Icon(Icons.circle, size: 8, color: Color(0xFFC7F46B)), SizedBox(width: 6), Text('متصل', style: TextStyle(fontSize: 11))]))],
         ),
@@ -94,7 +99,13 @@ class _ChatPageState extends State<ChatPage> {
   Widget _roomHeader() => Padding(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 14),
         child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('مساحة مشتركة', style: TextStyle(color: Color(0xFF8C9B94), fontSize: 11)), Text(room, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold)), const Text('مزامنة عبر الإنترنت والشبكة المحلية', style: TextStyle(color: Color(0xFF8C9B94), fontSize: 11))]),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('مساحة مشتركة', style: TextStyle(color: Color(0xFF8C9B94), fontSize: 11)),
+              Text(room, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+              const Text('مزامنة عبر الإنترنت والشبكة المحلية', style: TextStyle(color: Color(0xFF8C9B94), fontSize: 11), overflow: TextOverflow.ellipsis),
+            ]),
+          ),
           IconButton(onPressed: () {}, icon: const Icon(Icons.ios_share, color: Color(0xFFC7F46B))),
         ]),
       );

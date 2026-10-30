@@ -68,7 +68,11 @@ void main() {
           expect(req.url.toString(), endsWith('/api/push/preferences'));
           return http.Response(
             jsonEncode({
-              'preferences': {'messages': false, 'invites': true},
+              'preferences': {
+                'messages': false,
+                'invites': true,
+                'emergencies': true,
+              },
             }),
             200,
           );
@@ -76,7 +80,7 @@ void main() {
       )..setAuthToken('jwt-123');
 
       final prefs = await api.fetchPreferences();
-      expect(prefs, {'messages': false, 'invites': true});
+      expect(prefs, {'messages': false, 'invites': true, 'emergencies': true});
     });
 
     test('savePreferences: PUT بمحتوى التفضيلات', () async {
@@ -92,7 +96,44 @@ void main() {
         await api.savePreferences(messages: false, invites: true),
         isTrue,
       );
-      expect(jsonDecode(body!), {'messages': false, 'invites': true});
+      expect(
+        jsonDecode(body!),
+        {'messages': false, 'invites': true, 'emergencies': true},
+      );
+    });
+
+    test('savePreferences: emergencies مفعّل صراحةً في الجسم', () async {
+      String? body;
+      final api = PushApi(
+        client: MockClient((req) async {
+          body = req.body;
+          return http.Response('{}', 200);
+        }),
+      )..setAuthToken('jwt-123');
+
+      expect(
+        await api.savePreferences(
+          messages: true,
+          invites: true,
+          emergencies: false,
+        ),
+        isTrue,
+      );
+      expect(jsonDecode(body!)['emergencies'], isFalse);
+    });
+
+    test('fetchPreferences: emergencies غائبة ⇒ false (لا تفعيل صامت)', () async {
+      final api = PushApi(
+        client: MockClient((req) async => http.Response(
+              jsonEncode({
+                'preferences': {'messages': true, 'invites': true},
+              }),
+              200,
+            )),
+      )..setAuthToken('jwt-123');
+
+      final prefs = await api.fetchPreferences();
+      expect(prefs!['emergencies'], isFalse);
     });
 
     test('فشل الشبكة ⇒ false/null بهدوء (لا استثناءات)', () async {

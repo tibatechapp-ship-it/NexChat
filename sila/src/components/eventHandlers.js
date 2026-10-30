@@ -1,43 +1,42 @@
 import { state } from "../state/appState.js";
-import { renderApp } from "./uiRenderer.js";
+import { paint } from "./uiRenderer.js";
 
 /**
- * ربط أحداث الواجهة بالمعالجة
+ * ربط أحداث الواجهة بالمعالجة.
+ * يستخدم التفويض (event delegation) على #app حتى تعمل الأحداث
+ * بعد إعادة الرسم دون إعادة الربط في كل مرة.
  */
 export function bindEvents(handlers) {
-  // تبديل وسيلة النقل
-  document.querySelectorAll("[data-transport]").forEach((button) =>
-    button.addEventListener("click", () => {
-      handlers.onTransportChange(button.dataset.transport);
-    }),
-  );
+  const root = document.querySelector("#app");
 
-  // تبديل الغرفة
-  document.querySelectorAll("[data-room]").forEach((button) =>
-    button.addEventListener("click", () => {
-      handlers.onRoomChange(button.dataset.room);
-    }),
-  );
+  root.addEventListener("click", (event) => {
+    const transport = event.target.closest("[data-transport]");
+    if (transport) {
+      handlers.onTransportChange(transport.dataset.transport);
+      return;
+    }
+    const room = event.target.closest("[data-room]");
+    if (room) {
+      handlers.onRoomChange(room.dataset.room);
+      return;
+    }
+    if (event.target.closest("#refresh-peers")) {
+      handlers.onRefreshPeers();
+      return;
+    }
+    if (event.target.closest("#share-room")) {
+      handlers.onShareRoom();
+      return;
+    }
+    if (event.target.closest("#new-room")) {
+      handlers.onCreateRoom();
+    }
+  });
 
-  // إرسال الرسائل
-  document.querySelector("#composer")?.addEventListener("submit", (event) => {
+  root.addEventListener("submit", (event) => {
+    if (!event.target.closest("#composer")) return;
     event.preventDefault();
     handlers.onSendMessage();
-  });
-
-  // تحديث العقد
-  document.querySelector("#refresh-peers")?.addEventListener("click", () => {
-    handlers.onRefreshPeers();
-  });
-
-  // مشاركة الغرفة
-  document.querySelector("#share-room")?.addEventListener("click", () => {
-    handlers.onShareRoom();
-  });
-
-  // إنشاء غرفة جديدة
-  document.querySelector("#new-room")?.addEventListener("click", () => {
-    handlers.onCreateRoom();
   });
 }
 
@@ -47,12 +46,12 @@ export function bindEvents(handlers) {
 export const eventHandlers = {
   onTransportChange: (transport) => {
     state.transport = transport;
-    renderApp();
+    paint();
   },
 
   onRoomChange: (roomName) => {
     state.activeRoom = roomName;
-    renderApp();
+    paint();
   },
 
   onSendMessage: () => {

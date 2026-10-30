@@ -6,7 +6,7 @@
  * هروب نصوص HTML لمنع ثغرات XSS
  */
 export function escapeHtml(value) {
-  return value.replace(
+  return String(value).replace(
     /[&<>'"]/g,
     (char) =>
       ({

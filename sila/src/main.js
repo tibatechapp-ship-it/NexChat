@@ -3,7 +3,7 @@ import { state, addMessage, addPeer, setActiveRoom, setRoomCount } from "./state
 import { MeshService } from "./services/meshService.js";
 import { NetBridge } from "./services/netBridge.js";
 import { generateNodeId, formatTime } from "./utils/helpers.js";
-import { renderApp } from "./components/uiRenderer.js";
+import { paint } from "./components/uiRenderer.js";
 import { bindEvents, eventHandlers } from "./components/eventHandlers.js";
 
 // تهيئة العقدة
@@ -16,17 +16,17 @@ const netBridge = new NetBridge(nodeId);
 netBridge.onMessage((data) => {
   addPeer(data.from, Date.now());
   addMessage({ ...data.message, mine: false, transport: "net" });
-  renderApp();
+  paint();
 });
 netBridge.onPresence((data) => {
   addPeer(data.from, data.at);
-  renderApp();
+  paint();
 });
 netBridge.onStateChange((connected) => {
   // عند توفر نقل الخادم نعرضه كوسيلة فعلية — الواجهة الهجينة Mesh/Net مكتملة
   state.online = connected || navigator.onLine;
   if (connected) refreshSilaCounts();
-  renderApp();
+  paint();
 });
 netBridge.connect();
 
@@ -35,7 +35,7 @@ netBridge.connect();
 // تأتي من sila:peers بدل الأرقام الثابتة. بلا اتصال يبقى عدّاد BroadcastChannel.
 function refreshSilaCounts() {
   netBridge.peersCount(state.activeRoom).then((count) => {
-    if (count > 0) { setRoomCount(state.activeRoom, count); renderApp(); }
+    if (count > 0) { setRoomCount(state.activeRoom, count); paint(); }
   });
 }
 
@@ -44,7 +44,7 @@ eventHandlers.onRoomChange = (roomName) => {
   setActiveRoom(roomName);
   netBridge.join(roomName); // لا شيء بلا اتصال — BroadcastChannel ساحة واحدة محلياً
   refreshSilaCounts();
-  renderApp();
+  paint();
 };
 
 // نبض حضور دوري: يبقى عدّاد العقد والساحات حياً دون تدخل المستخدم
@@ -57,13 +57,13 @@ setInterval(() => {
 meshService.onMessage((data) => {
   addPeer(data.from, Date.now());
   addMessage({ ...data.message, mine: false });
-  renderApp();
+  paint();
 });
 
 // معالجة وجود العقد الأخرى
 meshService.onPresence((data) => {
   addPeer(data.from, data.at);
-  renderApp();
+  paint();
 });
 
 // معالج إرسال الرسائل المخصص
@@ -86,7 +86,7 @@ eventHandlers.onSendMessage = () => {
   // إرسال مزدوج المسار: نفس المتصفح (BroadcastChannel) + الأجهزة الأخرى (الخادم)
   meshService.sendMessage(message);
   netBridge.send(message);
-  renderApp();
+  paint();
 
   input.value = "";
   input.focus();
@@ -96,21 +96,21 @@ eventHandlers.onSendMessage = () => {
 eventHandlers.onRefreshPeers = () => {
   meshService.announcePresence();
   netBridge.announce();
-  renderApp();
+  paint();
 };
 
 // الاستماع لتغيرات حالة الإنترنت
 window.addEventListener("online", () => {
   state.online = true;
-  renderApp();
+  paint();
 });
 
 window.addEventListener("offline", () => {
   state.online = false;
-  renderApp();
+  paint();
 });
 
 // بدء التطبيق
 meshService.announcePresence();
 bindEvents(eventHandlers);
-renderApp();
+paint();
