@@ -28,7 +28,7 @@ subprojects {
         if (project.plugins.hasPlugin("com.android.library") ||
             project.plugins.hasPlugin("com.android.application")) {
             extensions.configure<com.android.build.gradle.BaseExtension> {
-                val current = compileSdkVersion.substringAfter("android-").toIntOrNull() ?: 0
+                val current = compileSdkVersion?.substringAfter("android-")?.toIntOrNull() ?: 0
                 if (current < 36) {
                     compileSdkVersion = "android-36"
                 }
