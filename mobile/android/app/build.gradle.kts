@@ -2,12 +2,16 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
-    // FCM: تُطبَّق إضافة Google Services فقط عند وجود google-services.json —
-    // بهذا يبقى البناء يعمل في بيئة التطوير بلا ملف Firebase، وبمجرد وضع
-    // الملف في مكانه تُنشَّط الإعدادات تلقائياً (docs/PUSH-SETUP.md).
-    if (file("google-services.json").exists()) {
-        id("com.google.gms.google-services")
-    }
+}
+
+// FCM: تُطبَّق إضافة Google Services شرطياً عند وجود google-services.json —
+// بهذا يبقى البناء يعمل في بيئة التطوير بلا ملف Firebase، وبمجرد وضع
+// الملف في مكانه تُنشَّط الإعدادات تلقائياً (docs/PUSH-SETUP.md).
+// بلوك plugins في Kotlin DSL لا يتيح استدعاء file() (Unresolved reference:
+// اكتشفه بناء AAB الأول) — التطبيق الشرطي هنا هو النمط الصحيح لأن
+// الإضافة معلنة في settings.gradle.kts بـ apply false.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 android {
