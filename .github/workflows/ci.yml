@@ -27,6 +27,10 @@ jobs:
       - name: Install
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+          # P6: اختبارات auth.js التشغيلية تستورد server/auth.js فعلياً — اعتماديات
+          # الخادم (jsonwebtoken/bcryptjs/...) تُثبّت أيضاً وإلا فشل الاختبار في CI فقط
+          # بMODULE_NOT_FOUND (محلياً server/node_modules موجود).
+          if [ -f server/package-lock.json ]; then npm ci --prefix server --no-audit --no-fund; else npm install --prefix server --no-audit --no-fund; fi
 
       - name: Lint
         run: npm run lint
