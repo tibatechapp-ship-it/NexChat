@@ -21,6 +21,10 @@ const loraGateway = require("./lora-gateway");
 const silaMesh = require("./sila-mesh");
 // التفاعلات والحظر والردود (P4 — بحث الميزات): إيموجي/حظر/ردود
 const interactions = require("./interactions");
+// خصوصية المحادثة (P6 — مراجعة المنافسين): مؤقت متلاشية للمحادثة + طلبات الرسائل
+const privacy = require("./privacy");
+// المسح الدوري للرسائل المتلاشية (P6 — إصلاح: المؤقتات تموت بإعادة التشغيل)
+const ephemeral = require("./ephemeral");
 
 const app = express();
 const server = http.createServer(app);
@@ -43,6 +47,7 @@ app.use("/api", notifications.createRouter({ authRequired }));
 app.use("/api", panic.createRouter({ authRequired, io }));
 app.use("/api", moderation.createRouter({ authRequired, io }));
 app.use("/api", interactions.createRouter({ authRequired, io }));
+app.use("/api", privacy.createRouter({ authRequired, io })); // P6: ttl + accept/decline
 
 const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 30 * 1024 * 1024 } });
 
@@ -51,6 +56,10 @@ silaMesh.init(io); // مساحة /sila على Socket.IO — نقل حقيقي ب
 // بوابة LoRa (Meshtastic MQTT) — معطلة ما لم تُضبط LORA_MQTT_URL؛ انقطاعها
 // لا يؤثر إطلاقاً على صلة أو رسن (فشل هادئ بطبيعته).
 loraGateway.init(io, silaMesh);
+
+// P6 — مسح المتلاشية عند الإقلاع: أي رسالة تجاوزت مؤقتها أثناء التوقف تُمحى
+// فوراً قبل استقبال أي اتصال (الوعد يعود ساريًا حتى بعد انقطاع طويل).
+ephemeral.sweepEphemeral({ io });
 
 // Deployment identity. Render exports the commit it is serving, so a post-deploy
 // check can prove that the LIVE process runs the code which just landed — a 200
@@ -121,8 +130,18 @@ io.on("connection", (socket) => {
     const m = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(conversationId, uid);
     if (!m) return;
 
-    const conv = db.prepare("SELECT type, current_key_version FROM conversations WHERE id = ?").get(conversationId);
+    const conv = db.prepare("SELECT type, current_key_version, ttl_seconds, dm_accepted, owner_id FROM conversations WHERE id = ?").get(conversationId);
     if (!conv) return;
+
+    // طلبات الرسائل (P6 — نمط WhatsApp): الردّ على طلبٍ يقبله تلقائياً — صاحب
+    // الطلب (المدعو) يرسل فيصير البدء مقبولاً ويُبث conv:accepted للغرفة.
+    // قيمة wasPending تُسجل قبل التحديث لقمع الدفع لاحقاً (بلا إشعارات مزعجة
+    // في الطلبات غير المقبولة — عقد الأمان الأساسي لهذه الميزة).
+    const wasPending = conv.type === "dm" && !conv.dm_accepted;
+    if (wasPending) {
+      db.prepare("UPDATE conversations SET dm_accepted = 1 WHERE id = ?").run(conversationId);
+      io.to("conv:" + conversationId).emit("conv:accepted", { conversationId, by: uid });
+    }
 
     // بوابة الحظر في رسائل DM القائمة (P4): حجب ثنائي الاتجاه يصمت المحادثة
     // القائمة كذلك — الرفض بعقد صريح يعرضه العميل (نمط WhatsApp/Telegram).
@@ -174,8 +193,13 @@ io.on("connection", (socket) => {
     }
 
     const time = Date.now();
-    const info = db.prepare("INSERT INTO messages (conversation_id, sender_id, type, ciphertext, iv, ephemeral_ttl, time, key_version, attachment_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(conversationId, uid, type || "text", ciphertext, iv, ephemeral_ttl || 0, time, key_version || 1, attachmentId || null, replyTo);
-    const msg = { id: info.lastInsertRowid, conversationId, senderId: uid, senderName: socket.user.username, type: type || "text", ciphertext, iv, time, ephemeral_ttl: ephemeral_ttl || 0, key_version: key_version || 1, attachmentId: attachmentId || null, replyTo };
+    // المؤقت الفعّال (P6 — نمط Signal): مدة المرسل الصريحة (>0) تتفوق، وإلا
+    // ترث الرسالة مؤقت المحادثة الافتراضي (conv.ttl_seconds) — فمثلاً محادثة
+    // ضبطت على «يوم» تجعل كل رسالة جديدة تختفي بعد يوم دون فعل من المرسل.
+    const senderTtl = Number.isInteger(ephemeral_ttl) && ephemeral_ttl > 0 ? ephemeral_ttl : 0;
+    const effTtl = senderTtl || (Number.isInteger(conv.ttl_seconds) && conv.ttl_seconds > 0 ? conv.ttl_seconds : 0);
+    const info = db.prepare("INSERT INTO messages (conversation_id, sender_id, type, ciphertext, iv, ephemeral_ttl, time, key_version, attachment_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(conversationId, uid, type || "text", ciphertext, iv, effTtl, time, key_version || 1, attachmentId || null, replyTo);
+    const msg = { id: info.lastInsertRowid, conversationId, senderId: uid, senderName: socket.user.username, type: type || "text", ciphertext, iv, time, ephemeral_ttl: effTtl, key_version: key_version || 1, attachmentId: attachmentId || null, replyTo };
     // clientId: معرّف يوضعه العميل لرسائل طابور الأوفلاين (≤ 64 حرفاً) — يمرّ
     // مع البث كي يستبدل العميل نسخته المتفائلة بالنسخة الرسمية دون تكرار.
     if (typeof clientId === "string" && clientId.length > 0 && clientId.length <= 64) {
@@ -193,11 +217,15 @@ io.on("connection", (socket) => {
     }
     for (const mm of members) {
       if (onlineIds.has(mm.user_id)) continue;
+      // طلبات الرسائل (P6): بلا إشعارات دفع للطلب غير المقبول — يصله لما
+      // يفتح التطبيق ويجده في قسم الطلبات (نفس عقد WhatsApp/Signal: طلبات
+      // لا إشعارات، لئلا يصير بدء محادثات من غرباء قناة إزعاج).
+      if (wasPending) continue;
       if (!notifications.canPush(mm.user_id, "new_message")) continue; // تفضيلات المستخدم (تشغيل/إيقاف)
       push.sendToUser(mm.user_id, notifications.buildNotificationPayload("new_message", { conversationId, messageId: msg.id }));
     }
 
-    if (ephemeral_ttl > 0) {
+    if (effTtl > 0) {
       setTimeout(() => {
         db.prepare("DELETE FROM messages WHERE id = ?").run(msg.id);
         io.to("conv:" + conversationId).emit("message:deleted", { id: msg.id });
@@ -320,7 +348,9 @@ io.on("connection", (socket) => {
 // ===== REST: conversations =====
 app.get("/api/conversations", authRequired, (req, res) => {
   // pinned_message_id مرفق للأدوات الإشرافية — اللاصقة تعرضها فور فتح المحادثة
-  const rows = db.prepare(`SELECT c.id, c.type, c.name, c.description, c.owner_id, c.created_at, c.current_key_version, c.pinned_message_id,
+  // ttl_seconds وdm_accepted (P6): مؤقت المتلاشية + طلبات الرسائل — يعرف
+  // العميل منهما ما يحتاج دون نداء إضافي.
+  const rows = db.prepare(`SELECT c.id, c.type, c.name, c.description, c.owner_id, c.created_at, c.current_key_version, c.pinned_message_id, c.ttl_seconds, c.dm_accepted,
     (SELECT COUNT(*) FROM conversation_members WHERE conversation_id = c.id) AS members
     FROM conversations c JOIN conversation_members m ON m.conversation_id = c.id
     WHERE m.user_id = ? ORDER BY c.created_at DESC`).all(req.user.id);
@@ -337,7 +367,13 @@ app.post("/api/conversations", authRequired, (req, res) => {
       if (u && interactions.isBlockedBetween(req.user.id, u.id)) return res.status(403).json({ error: "blocked" });
     }
   }
-  const info = db.prepare("INSERT INTO conversations (type, name, description, owner_id, created_at) VALUES (?, ?, ?, ?, ?)").run(type, name || null, description || null, req.user.id, Date.now());
+  const info = db.prepare("INSERT INTO conversations (type, name, description, owner_id, created_at, dm_accepted) VALUES (?, ?, ?, ?, ?, ?)").run(
+    type, name || null, description || null, req.user.id, Date.now(),
+    // طلبات الرسائل (P6 — نمط WhatsApp/Signal): DM يبدؤها شخص لشخص آخر تصل
+    // صاحبها الثانية «طلبًا» غير مقبول (dm_accepted=0) يقبله صراحة أو يرد
+    // فيُقبل تلقائياً؛ المجموعات والقنوات تبقى مقبولة دائماً (1).
+    type === "dm" && (members || []).length > 0 ? 0 : 1
+  );
   const cid = info.lastInsertRowid;
   const addMember = db.prepare("INSERT INTO conversation_members (conversation_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)");
   addMember.run(cid, req.user.id, "owner", Date.now());
@@ -419,10 +455,24 @@ app.delete("/api/conversations/:id/members/:userId", authRequired, (req, res) =>
 app.get("/api/conversations/:id/messages", authRequired, (req, res) => {
   const m = db.prepare("SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?").get(req.params.id, req.user.id);
   if (!m) return res.status(403).json({ error: "forbidden" });
-  const rows = db.prepare(`SELECT m.id, m.conversation_id AS conversationId, m.sender_id AS senderId, u.username AS senderName, m.type, m.ciphertext, m.iv, m.ephemeral_ttl, m.time, m.key_version, m.attachment_id AS attachmentId, m.deleted, m.edited_at, m.reply_to_id AS replyTo FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted = 0 ORDER BY m.time DESC LIMIT 100`).all(req.params.id).reverse();
+  // ترقيم صفحات التاريخ (P6 — نمط Telegram/WhatsApp «تحميل الأقدم»):
+  // افتراضياً آخر 100 رسالة صاعدة؛ ?before=<id> يعيد ما قبله أقدم، ?limit
+  // يسقف حتى 100 (خارج النطاق = افتراضي) — لا تعطيل ولا استعلام غير مقيد.
+  let limit = Number(req.query.limit);
+  if (!Number.isInteger(limit) || limit < 1) limit = 100;
+  if (limit > 100) limit = 100;
+  const before = Number(req.query.before);
+  const whereBefore = Number.isInteger(before) && before > 0 ? "AND m.id < ?" : "";
+  const params = Number.isInteger(before) && before > 0 ? [req.params.id, before] : [req.params.id];
+  const rows = db.prepare(`SELECT m.id, m.conversation_id AS conversationId, m.sender_id AS senderId, u.username AS senderName, m.type, m.ciphertext, m.iv, m.ephemeral_ttl, m.time, m.key_version, m.attachment_id AS attachmentId, m.deleted, m.edited_at, m.reply_to_id AS replyTo FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? AND m.deleted = 0 ${whereBefore} ORDER BY m.time DESC, m.id DESC LIMIT ?`).all(...params, limit).reverse();
+  // has_more + oldestId: يعرف العميل هل يعرض زر «الأقدم» ومؤشر النداء التالي —
+  // بدون عدّ إضافي: امتلاء الصفحة = غالباً المزيد (تقريب مقبول لأرشيف المحادثات)
+  // وأدق من ذلك: قبلتّ إذا كانت أعلى الصفحة ليست أقدم رسالة في المحادثة.
+  const oldest = rows.length ? rows[0].id : null;
+  const hasMore = rows.length > 0 && !!db.prepare(`SELECT 1 FROM messages WHERE conversation_id = ? AND deleted = 0 AND id < ? LIMIT 1`).get(req.params.id, oldest);
   // تفاعلات الرسائل (P4) وأصوات الاستطلاعات (P5) مجمّعة لصفحة الرسائل الحالية —
   // ميتاداتا فقط بلا محتوى
-  res.json({ messages: interactions.attachPollVotes(interactions.attachReactions(rows)) });
+  res.json({ messages: interactions.attachPollVotes(interactions.attachReactions(rows)), hasMore, oldestId: oldest });
 });
 
 // ===== Group key =====
@@ -616,6 +666,9 @@ app.post("/api/push/unregister", authRequired, (req, res) => {
 // ===== Cleanup =====
 setInterval(() => {
   db.prepare("DELETE FROM stories WHERE expires_at < ?").run(Date.now());
+  // P6 — مسح المتلاشية كل 60 ثانية: يلتقط كل ما تجاوز مؤقته حتى لو سقط
+  // setTimeout الخاص به بإعادة تشغيل — الوعد بلا استثناء لا بمؤقتات هشة.
+  ephemeral.sweepEphemeral({ io });
 }, 60 * 1000);
 
 app.use(security.errorHandler);

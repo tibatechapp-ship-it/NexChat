@@ -16,6 +16,9 @@ const state = {
   archived: JSON.parse(localStorage.getItem("rasan_archived") || "[]"),
   showArchived: false,
   searchQuery: "",
+  // P6 — ترقيم صفحات التاريخ (نمط Telegram/WhatsApp): مؤشر أقدم صفحة محمّلة
+  // وهل هناك مزيد — يتغذّيان من hasMore/oldestId التي يرجعها الخادم.
+  _oldestId: null, _hasMore: false, _loadingOlder: false,
 };
 
 // ===== P4: مخازن محلية (محفوظات/أرشيف) — E2EE آمنة: النص المفكوك يبقى على الجهاز
@@ -382,6 +385,23 @@ async function connectSocket() {
     if (state.activeConv?.id !== conversationId) return;
     applyPollVoteUpdate({ messageId, userId, optionIndex });
   });
+  // P6 — مؤقت المتلاشية حي (نمط Signal): أي عضو يغيّره يظهر للجميع فوراً
+  state.socket.on("conv:ttl", ({ conversationId, ttlSeconds, by }) => {
+    if (by === state.user.id) return; // أنا وضعته — الإشعار وصل أولاً
+    const conv = state.convs.find(c => c.id === conversationId);
+    if (conv) { conv.ttl_seconds = ttlSeconds; renderList(); }
+    if (state.activeConv?.id === conversationId) showToast(ttlSeconds > 0 ? t("ttlToast") : t("ttlClearedToast"), "info");
+  });
+  // P6 — قبول/رفض طلب الرسالة حيًا: القائمة تتحدث لدى الطرفين بلا إعادة جلب
+  state.socket.on("conv:accepted", ({ conversationId }) => {
+    const conv = state.convs.find(c => c.id === conversationId);
+    if (conv && conv.dm_accepted === 0) { conv.dm_accepted = 1; renderList(); }
+  });
+  state.socket.on("conv:declined", ({ conversationId }) => {
+    const existed = state.convs.some(c => c.id === conversationId);
+    if (existed) { state.convs = state.convs.filter(c => c.id !== conversationId); renderList(); }
+    if (state.activeConv?.id === conversationId) $("back").click(); // المحادثة ماتت — عُد للقائمة
+  });
   state.socket.on("message:edited", async ({ id, ciphertext, iv, edited_at }) => {
     const el = document.querySelector(`[data-mid="${id}"]`);
     if (!el || !state.activeKey) return;
@@ -489,10 +509,53 @@ async function connectSocket() {
 }
 
 // ===== Conversations =====
+// طلب مراسلة معلّق (P6 — نمط WhatsApp/Signal): DM بدأها غيري ولم أقبله بعد —
+// يظهر في قسم الطلبات لا في القائمة الرئيسية.
+function isPendingRequest(c) {
+  return c.type === "dm" && c.dm_accepted === 0 && c.owner_id !== state.user?.id;
+}
+
 async function loadConversations() {
   const { conversations } = await api("/api/conversations");
   state.convs = conversations;
   renderList();
+}
+
+// صف طلب مراسلة: اسم + زرا قبول/رفض صريحان — والفتح بالضغط مسموح للقراءة
+// قبل القرار (نفس عقد WhatsApp: ترى الطلب ثم تقبله أو ترفضه)
+function requestRow(c) {
+  const el = document.createElement("div");
+  el.className = "conv request";
+  el.dataset.cid = c.id;
+  const name = c.name || `DM #${c.id}`;
+  el.innerHTML = `<div class="conv-icon">📨</div><div class="conv-body"><b>${escapeHtml(name)}</b><small>${t("convPending")}</small></div>`;
+  const acc = document.createElement("button");
+  acc.type = "button"; acc.className = "req-accept"; acc.textContent = "✅ " + t("reqAccept");
+  acc.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await api(`/api/conversations/${c.id}/accept`, { method: "POST", body: "{}" });
+      c.dm_accepted = 1; renderList(); showToast(t("reqAcceptedToast"), "success");
+      openConversation(c);
+    } catch (err) { showToast(translateErr(err.message), "error"); }
+  });
+  const dec = document.createElement("button");
+  dec.type = "button"; dec.className = "req-decline"; dec.textContent = "🗑 " + t("reqDecline");
+  dec.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await api(`/api/conversations/${c.id}/decline`, { method: "POST", body: "{}" });
+      state.convs = state.convs.filter(x => x.id !== c.id);
+      renderList(); showToast(t("reqDeclinedToast"), "info");
+    } catch (err) { showToast(translateErr(err.message), "error"); }
+  });
+  el.append(acc, dec);
+  el.tabIndex = 0;
+  el.setAttribute("role", "button");
+  el.setAttribute("aria-label", name);
+  el.addEventListener("click", () => openConversation(c));
+  el.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openConversation(c); } });
+  return el;
 }
 
 function renderList() {
@@ -510,16 +573,34 @@ function renderList() {
   archiveBar.appendChild(archiveBtn);
   list.appendChild(archiveBar);
 
-  const visible = state.convs.filter((c) => (state.showArchived ? isArchived(c.id) : !isArchived(c.id)));
-  if (!visible.length) { list.innerHTML += `<p class="empty">${I18N[state.locale].noMessages}</p>`; return; }
+  // طلبات المراسلة (P6 — نمط WhatsApp/Signal): قسم خاص أعلى القائمة — لا
+  // تُخلط بالمحادثات النشطة، وفيه أزرار قبول/رفض صريحة (بلا إشعارات دفع —
+  // عقد الخادم: الطلبات صامتة حتى تُقبل)
+  const pending = state.showArchived ? [] : state.convs.filter(isPendingRequest);
+  if (pending.length) {
+    const reqs = document.createElement("div");
+    reqs.className = "requests-section";
+    reqs.dataset.requestsSection = "1";
+    const h = document.createElement("b");
+    h.textContent = `📨 ${t("requestsTitle")} (${pending.length})`;
+    reqs.appendChild(h);
+    for (const c of pending) reqs.appendChild(requestRow(c));
+    list.appendChild(reqs);
+  }
+
+  const visible = state.convs
+    .filter((c) => (state.showArchived ? isArchived(c.id) : !isArchived(c.id)))
+    .filter((c) => !isPendingRequest(c)); // الطلبات في قسمها — لا مكرر
+  if (!visible.length && !pending.length) { list.innerHTML += `<p class="empty">${I18N[state.locale].noMessages}</p>`; return; }
   for (const c of visible) {
     const el = document.createElement("div");
     el.className = "conv";
     el.dataset.cid = c.id;
     const icon = c.type === "channel" ? "📢" : c.type === "group" ? "👥" : "💬";
     const unread = c._unread ? `<span class="badge">${c._unread}</span>` : "";
+    const ttlBadge = c.ttl_seconds > 0 ? ` <span class="ttl-badge" title="${t("ttlMenu")}">${t("ttlBadge")}</span>` : "";
     const name = c.name || `DM #${c.id}`;
-    el.innerHTML = `<div class="conv-icon">${icon}</div><div class="conv-body"><b>${escapeHtml(name)}</b><small>${c.members} ${I18N[state.locale].members || "members"}</small></div>${unread}`;
+    el.innerHTML = `<div class="conv-icon">${icon}</div><div class="conv-body"><b>${escapeHtml(name)}</b><small>${c.members} ${I18N[state.locale].members || "members"}${ttlBadge}</small></div>${unread}`;
     el.tabIndex = 0;
     el.setAttribute("role", "button");
     el.setAttribute("aria-label", name);
@@ -535,7 +616,7 @@ function renderList() {
   }
 }
 
-// قائمة المحادثة: أرشفة/إلغاء أرشفة (P4) — إخفاء بدون حذف
+// قائمة المحادثة: أرشفة/إلغاء أرشفة (P4) — إخفاء بدون حذف + مؤقت المتلاشية (P6)
 function showConvMenu(c, el) {
   const menu = document.createElement("div");
   menu.className = "msg-menu";
@@ -547,11 +628,52 @@ function showConvMenu(c, el) {
   btn.textContent = isArchived(c.id) ? `↩ ${t("unarchiveChat")}` : `📦 ${t("archiveChat")}`;
   btn.onclick = () => { menu.remove(); toggleArchive(c.id); };
   menu.appendChild(btn);
+  // مؤقت المتلاشية للمحادثة (P6 — نمط Signal): قائمة فرعية بالمدد البيضاء
+  const ttlBtn = document.createElement("button");
+  ttlBtn.type = "button";
+  ttlBtn.className = "msg-menu-item";
+  ttlBtn.textContent = t("ttlMenu") + (c.ttl_seconds > 0 ? ` (${c.ttl_seconds}s)` : "");
+  ttlBtn.onclick = () => { menu.remove(); showTtlMenu(c, el); };
+  menu.appendChild(ttlBtn);
   const rect = el.getBoundingClientRect();
   menu.style.top = Math.min(rect.top, window.innerHeight - 90) + "px";
   menu.style.insetInlineStart = "16px";
   document.body.appendChild(menu);
   btn.focus();
+  setTimeout(() => document.addEventListener("click", closeMsgMenu, { once: true }), 0);
+}
+
+// قائمة مؤقت المتلاشية (P6 — نمط Signal): إيقاف/ساعة/يوم/أسبوع/30 يوماً —
+// يُرفع PATCH للخادم فيبثّه للغرفة، فتصير كل الرسائل الجديدة تختفي بعد المدة
+// حتى بلا فعل من المرسل (الخادم يملك المؤقت — المسح الدوري في ephemeral.js)
+function showTtlMenu(c, el) {
+  const menu = document.createElement("div");
+  menu.className = "msg-menu";
+  menu.dataset.msgMenu = "1";
+  menu.setAttribute("role", "menu");
+  const opts = [["ttlOff", 0], ["ttl1h", 3600], ["ttl1d", 86400], ["ttl1w", 604800], ["ttl30d", 2592000]];
+  for (const [key, secs] of opts) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "msg-menu-item";
+    b.dataset.ttlSeconds = String(secs);
+    b.textContent = (c.ttl_seconds === secs ? "✓ " : "") + t(key);
+    b.onclick = async () => {
+      menu.remove();
+      try {
+        await api(`/api/conversations/${c.id}/ttl`, { method: "PATCH", body: JSON.stringify({ ttl_seconds: secs }) });
+        c.ttl_seconds = secs;
+        showToast(secs > 0 ? `${t("ttlToast")}: ${t(key)}` : t("ttlClearedToast"), "success");
+        renderList();
+      } catch (err) { showToast(translateErr(err.message), "error"); }
+    };
+    menu.appendChild(b);
+  }
+  const rect = el.getBoundingClientRect();
+  menu.style.top = Math.min(rect.top, window.innerHeight - 220) + "px";
+  menu.style.insetInlineStart = "16px";
+  document.body.appendChild(menu);
+  menu.querySelector("button").focus();
   setTimeout(() => document.addEventListener("click", closeMsgMenu, { once: true }), 0);
 }
 
@@ -608,8 +730,13 @@ async function openConversation(conv) {
     } catch { conv._myRole = "member"; }
   }
 
-  const { messages } = await api(`/api/conversations/${conv.id}/messages`);
-  for (const m of messages) {
+  // ترقيم صفحات التاريخ (P6): الخادم يعيد hasMore/oldestId — زر «الأقدم»
+  // يظهر فقط إن كان هناك تاريخ قبل ما حُمّل
+  const msgsResp = await api(`/api/conversations/${conv.id}/messages`);
+  state._oldestId = msgsResp.oldestId ?? (msgsResp.messages[0]?.id ?? null);
+  state._hasMore = !!msgsResp.hasMore;
+  updateLoadOlder();
+  for (const m of msgsResp.messages) {
     if (m.type === "file") {
       const text = await decryptMessage(m);
       try { appendFileMessage(m, JSON.parse(text)); } catch { appendMessage({ ...m, text: "📎 ملف" }); }
@@ -623,6 +750,48 @@ async function openConversation(conv) {
   $("msg-input").focus();
   // استعادة المسودة المحلية لهذه المحادثة (P5 — تبقى على الجهاز فقط)
   $("msg-input").value = getDraft(conv.id);
+}
+
+// ===== ترقيم صفحات التاريخ (P6 — نمط Telegram/WhatsApp «تحميل الأقدم») =====
+// زر أعلى الرسائل يظهر فقط إن كان hasMore — الجلب قبل oldestId ثم إدراج
+// الرسائل أعلى القائمة مع حفظ موضع التمرير (لا قفزة مزعجة)
+function updateLoadOlder() {
+  const btn = $("load-older");
+  if (!btn) return;
+  btn.classList.toggle("hidden", !(state.activeConv && state._hasMore && state._oldestId));
+}
+
+async function loadOlder() {
+  if (!state.activeConv || !state._oldestId || state._loadingOlder) return;
+  const conv = state.activeConv;
+  state._loadingOlder = true;
+  const btn = $("load-older");
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await api(`/api/conversations/${conv.id}/messages?before=${state._oldestId}&limit=50`);
+    if (state.activeConv?.id !== conv.id) return; // بدّل المحادثة أثناء الجلب
+    const box = $("messages");
+    const prevHeight = box.scrollHeight;
+    for (const m of resp.messages) {
+      if (m.type === "file") {
+        const text = await decryptMessage(m);
+        try { appendFileMessage(m, JSON.parse(text), { prepend: true }); } catch { appendMessage({ ...m, text: "📎 ملف" }, { prepend: true }); }
+      } else {
+        const text = await decryptMessage(m);
+        appendMessage({ ...m, text }, { prepend: true });
+      }
+    }
+    // حفظ موضع التمرير: الارتفاع زاد بقدر المحتوى المُدرج — نزح التمرير بنفس القدر
+    box.scrollTop = box.scrollHeight - prevHeight;
+    if (resp.messages.length) state._oldestId = resp.messages[0].id;
+    state._hasMore = !!resp.hasMore;
+    updateLoadOlder();
+  } catch (err) { showToast(translateErr(err.message), "error"); }
+  finally {
+    state._loadingOlder = false;
+    if (btn) btn.disabled = false;
+    if (state.activeConv?.id === conv.id) updateLoadOlder();
+  }
 }
 
 async function ensureGroupKey(conv) {
@@ -639,7 +808,7 @@ async function decryptMessage(m) {
   try { if (state.activeKey) return await RasanCrypto.decrypt(state.activeKey, m.ciphertext, m.iv); return "🔒"; } catch { return "🔒"; }
 }
 
-function appendMessage(m) {
+function appendMessage(m, opts) {
   const div = document.createElement("div");
   div.className = "msg " + (m.senderId === state.user.id ? "mine" : "other");
   div.dataset.mid = m.id;
@@ -734,8 +903,14 @@ function appendMessage(m) {
   }
 
   applySearchFilter(div, m);
-  $("messages").appendChild(div);
-  $("messages").scrollTop = $("messages").scrollHeight;
+  // prepend (P6 — ترقيم الصفحات): يُدرج أعلى القائمة بلا قفزة تمرير؛
+  // المسار العادي يضيف أسفل وينزل للآخر كما كان دائماً
+  if (opts?.prepend) {
+    $("messages").insertBefore(div, $("messages").firstChild);
+  } else {
+    $("messages").appendChild(div);
+    $("messages").scrollTop = $("messages").scrollHeight;
+  }
 }
 
 // لاصقات التفاعلات لرسالة: 👍2 ❤️1 — مصدرها state._reactions الحيّة
@@ -1438,6 +1613,9 @@ function showEmergencyBanner(byName) {
   emergencyTimer = setTimeout(() => $("emergency-banner").classList.add("hidden"), 30000);
 }
 
+// زر «تحميل الأقدم» (P6 — ترقيم صفحات التاريخ)
+$("load-older")?.addEventListener("click", loadOlder);
+
 // ===== Back / Logout =====
 $("back").addEventListener("click", () => {
   state.activeConv = null; state.activeKey = null;
@@ -1450,6 +1628,7 @@ $("back").addEventListener("click", () => {
   $("members-btn").classList.add("hidden");
   $("emergency-btn").classList.add("hidden");
   $("pinned-banner").classList.add("hidden");
+  $("load-older")?.classList.add("hidden"); // P6: زر الأقدم لا معنى له خارج محادثة
   window.dispatchEvent(new CustomEvent("rasan:conv-close"));
 });
 
@@ -1491,7 +1670,7 @@ $("story-form").addEventListener("submit", async (e) => {
 });
 
 // ===== File message rendering =====
-function appendFileMessage(m, meta) {
+function appendFileMessage(m, meta, opts) {
   const div = document.createElement("div");
   div.className = "msg " + (m.senderId === state.user.id ? "mine" : "other");
   div.dataset.mid = m.id;
@@ -1505,8 +1684,12 @@ function appendFileMessage(m, meta) {
   const small = document.createElement("small"); small.textContent = new Date(m.time).toLocaleTimeString(state.locale, { hour: "2-digit", minute: "2-digit" });
 
   div.append(b, att, small);
-  $("messages").appendChild(div);
-  $("messages").scrollTop = $("messages").scrollHeight;
+  if (opts?.prepend) {
+    $("messages").insertBefore(div, $("messages").firstChild);
+  } else {
+    $("messages").appendChild(div);
+    $("messages").scrollTop = $("messages").scrollHeight;
+  }
 
   loadAndDisplayAttachment(meta, att).catch(() => {
     att.innerHTML = `<div class="file-card"><span class="icon">❌</span><div class="meta"><b>${escapeHtml(meta.filename)}</b><small>فشل التحميل</small></div></div>`;

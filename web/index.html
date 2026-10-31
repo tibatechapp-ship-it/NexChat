@@ -92,6 +92,9 @@
       <button id="pinned-jump" class="icon" aria-label="الانتقال للرسالة المثبّتة">⤴</button>
       <button id="pinned-unpin" class="icon hidden" aria-label="إلغاء التثبيت">✕</button>
     </div>
+    <!-- ترقيم صفحات التاريخ (P6 — نمط Telegram/WhatsApp): زر «الأقدم» أعلى الرسائل —
+         يظهر فقط حين يخبر الخادم hasMore أن هناك تاريخاً قبل ما حُمّل -->
+    <button type="button" id="load-older" class="load-older hidden">⬆ تحميل الرسائل الأقدم</button>
     <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
     <p id="typing" class="typing" aria-live="polite"></p>
     <div id="recording-bar" class="recording-bar hidden" role="status" aria-live="polite">

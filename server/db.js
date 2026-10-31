@@ -174,5 +174,29 @@ try {
 } catch (e) {
   if (!String(e.message).includes("duplicate column name")) throw e;
 }
+// ttl_seconds (P6 — نمط Signal «Disappearing Messages» الافتراضي): مؤقت متلاشية
+// على مستوى المحادثة كله — الرسائل الجديدة ترثه إن لم تحدد المرسل مدة أطول.
+// 0 = معطّل (الافتراضي؛ المحادثات القائمة تبقى كما هي بلا سلوك مفاجئ).
+try {
+  db.exec("ALTER TABLE conversations ADD COLUMN ttl_seconds INTEGER DEFAULT 0");
+} catch (e) {
+  if (!String(e.message).includes("duplicate column name")) throw e;
+}
+// dm_accepted (P6 — نمط WhatsApp/Signal «Message Requests»): طلبات الرسائل.
+// DM يبدؤها شخص غريب تصل صاحبها الثانية كـ«طلب» يقبله صراحةً (أو يرد فتُقبل
+// تلقائياً). القيمة 1 للقديمة وللمجموعات وللقنوات — صفر فقط لDM جديدة بضيف.
+try {
+  db.exec("ALTER TABLE conversations ADD COLUMN dm_accepted INTEGER DEFAULT 1");
+} catch (e) {
+  if (!String(e.message).includes("duplicate column name")) throw e;
+}
+// token_version (P6 — نمط إدارة الجلسات في Signal/WhatsApp): يُرفع عند تغيير
+// كلمة المرور أو «خروج من كل الأجهزة» فتموت كل توكنات JWT الصادرة قبل ذلك —
+// بلا قائمة revocation خادمية (تصميم بلا حالة يحافظ على بساطة النشر).
+try {
+  db.exec("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0");
+} catch (e) {
+  if (!String(e.message).includes("duplicate column name")) throw e;
+}
 
 module.exports = { db, DATA_DIR, UPLOAD_DIR };
