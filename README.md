@@ -23,6 +23,22 @@
 
 ---
 
+## 🎯 ما هذا؟ ولمن هذا؟
+
+- **ما هو**: تطبيق دردشة جماعية مشفّر طرفاً-لطرف **بلا رقم هاتف** — اسم مستخدم فقط، عربي RTL أولاً، واجهة ~7KB مضغوطة تعمل حتى على شبكات ضعيفة، ومفتوح المصدر قابل للاستضافة الذاتية.
+- **لمن**: مجتمعات عربية تحتاج الخصوصية كاملة (صحفيون، جماعات حساسة، عائلات، فِرق ميدانية) — ومن يستضيف بنفسه ويرفض ربط دردشته برقم هاتفه وسحابة مزوّد.
+- **وعدٌ مميز** عن البدائل: WhatsApp ثقيل ومرتبط بالرقم، Signal متطلب متجر، Telegram ليس E2EE افتراضياً — رسن يجمع: خفّة + بلا رقم + تشفير افتراضي + إشراف مجتمعي + أوضاع طوارئ (مسح ذعر، PTT، LoRa).
+
+## ✅ يعمل اليوم — بالدليل (2026-10-31)
+
+| القدرة | الدليل القابل للتحقق |
+|---|---|
+| **312 اختباراً زمنياً أخضر** | الخادم `vitest run` = **265/265** (19 ملفاً) + الجوال `flutter test` = **47/47** |
+| CI نشر حقيقي | `ci` أخضر → `deploy-render.yml` ينشر ويُثبت الإصدار عبر `/health` بمطابقة SHA — لا يكتفي بـ200 |
+| أمان مُصمّم | ECDH P-256 + AES-GCM + TOFU + forward secrecy + AAD anti-replay — موثق في [SECURITY.md](SECURITY.md) بنموذج تهديد كامل |
+| تطبيق جوال حقيقي | Flutter: بوابة مصادقة، جلسات، ثيم ثلاثي، FCM بقوالب مطابقة حرفياً للخادم — **47 اختبار widget/unit** |
+| إشعار طوارئ مطابق | قالب `emergency` متطابق بايت-بايت بين الخادم والجوال، مع اختبار رجعي يمنع الانجراف |
+
 ## الميزات
 
 - ✅ E2EE (ECDH P-256 + AES-GCM + TOFU identity + per-session forward secrecy + AAD anti-replay)
@@ -60,7 +76,8 @@
 Rasan/
 ├── server/     Express + Socket.IO + better-sqlite3 + bcrypt + JWT
 ├── web/        Vanilla JS + Web Crypto + i18n + PWA (no build step)
-├── mobile/     Flutter (placeholder)
+├── mobile/     Flutter: بوابة مصادقة + إشعارات FCM + ثيم — 47 اختباراً خضراً
+├── sila/       وحدة الاتصال الميداني (CRDT لوحة مشتركة + LoRa) — وُلدت من دمج wifi-chat
 └── data/       SQLite DB + uploads (gitignored)
 ```
 
@@ -121,6 +138,13 @@ gh variable set RASAN_SITE_URL -R tibatechapp-ship-it/Rasan --body https://<serv
 ```bash
 curl -fsS https://<service>.onrender.com/health   # {"ok":true,"uptime":…,"version":"1.0.0","commit":"abc1234"}
 ```
+
+## 🗺️ الطريق نحو المتاجر
+
+الواجهة PWA اليوم، والجوال Flutter حقيقي. المتبقي معلن في [خارطة المنتَجة](https://github.com/tibatechapp-ship-it/vixona-github-profile/blob/main/docs/productization-plan.md):
+1. **AAB موقّع** يُبنى تلقائياً في CI على كل tag (أسبوع 1)
+2. **صفحة demo عامة** بحسابات تجريبية للزائر (أسبوع 2)
+3. **MLS RFC 9420** لتشفير الجماعات الأصلي + اختبار ميداني موثق (أسبوع 3)
 
 ## التوثيق
 

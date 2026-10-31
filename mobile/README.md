@@ -1,6 +1,11 @@
 # Rasan Mobile (Flutter)
 
-Native Android/iOS client. Planned: chat list, conversation view, WiFi discovery (mDNS), push notifications.
+عميل Android/iOS أصلي للجوال — بوابة مصادقة، جلسات محروسة، وضع ليلي ثلاثي، وإشعارات FCM
+بقوالب مطابقة حرفياً للخادم. **47 اختباراً (unit + widget) خضراء** عبر `flutter test`
+(تاريخ التحقق: 2026-10-31).
+
+القادم معلن في [خارطة المنتَجة](https://github.com/tibatechapp-ship-it/vixona-github-profile/blob/main/docs/productization-plan.md):
+قائمة محادثات، عرض محادثة، اكتشاف WiFi (mDNS)، وبناء AAB موقّع في CI.
 
 Setup: `flutter pub get && flutter run`
 
@@ -18,14 +23,16 @@ Setup: `flutter pub get && flutter run`
 ## Push Notifications (الإشعارات — FCM)
 
 إشعارات آمنة تحترم E2EE: **لا تحتوي أبداً على محتوى الرسالة** — نصوص ثابتة فقط
-("لديك رسالة جديدة" / "لديك دعوة إلى مجموعة") تُبنى في الخادم من
-`server/notifications.js` وفي الجوال من `lib/push/notification_templates.dart`.
+("لديك رسالة جديدة" / "لديك دعوة إلى مجموعة" / "🚨 تنبيه طوارئ") تُبنى في الخادم من
+`server/notifications.js` وفي الجوال من `lib/push/notification_templates.dart` —
+واختبار رجعي يطابق الجانبين حرفياً فيمنع أي انجراف بينهما.
 
 ### الأنواع المدعومة
 | النوع | النص | data.kind |
 |---|---|---|
 | رسالة جديدة | لديك رسالة جديدة | `new_message` |
 | دعوة إلى مجموعة | لديك دعوة إلى مجموعة | `group_invite` |
+| **طوارئ** | 🚨 تنبيه طوارئ — افتح التطبيق الآن | `emergency` |
 
 ### التحكم في الإشعارات
 - **الإعدادات ← الإشعارات**: مفتاح تشغيل/إيقاف لكل نوع.
